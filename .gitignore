@@ -1,1 +1,4 @@
 *.pkl
+dataset/orig_data/MIMICtable_261219.csv
+dataset/orig_data/MIMIC_90.csv
+**/__pycache__/ 
