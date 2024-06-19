@@ -1,4 +1,5 @@
-from data_provider.data_loader import Dataset_ETT_hour, Dataset_ETT_minute, Dataset_MIMIC
+from data_provider.data_loader import Dataset_ETT_hour, Dataset_ETT_minute
+from data_provider.mimic_loader import Dataset_MIMIC
 from torch.utils.data import DataLoader
 
 data_dict = {
