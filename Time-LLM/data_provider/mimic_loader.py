@@ -6,14 +6,12 @@ import os
 import numpy as np
 import pandas as pd
 from torch.utils.data import Dataset
-from sklearn.preprocessing import StandardScaler
-from utils.timefeatures import time_features
 import warnings
 
 warnings.filterwarnings('ignore')
 
 class Dataset_MIMIC(Dataset):
-    def __init__(self, root_path, flag='train', size=None,
+    def __init__(self, root_path, flag='train', max_len=80,
                  features='S', data_path='MIMICtable_261219.csv',
                  target='OT', scale=True, timeenc=0, freq='h', percent=100,
                  seasonal_patterns=None):
@@ -24,6 +22,7 @@ class Dataset_MIMIC(Dataset):
         self.timeenc = timeenc
         self.freq = freq
         self.percent = percent
+        self.max_len = max_len
 
         self.root_path = root_path
         self.data_path = data_path
@@ -59,12 +58,19 @@ class Dataset_MIMIC(Dataset):
 
 
     def __getitem__(self, index):
-        seq_x = self.data_x[index]
+        seq_x, mask_x = self.pad_sequence(self.data_x[index])
         seq_y = self.data_y[index]
-        return seq_x, seq_y
+        
+        return seq_x, seq_y, mask_x
 
     def __len__(self):
         return self.tot_len
 
-    def inverse_transform(self, data):
-        return self.scaler.inverse_transform(data)
+    def pad_sequence(self, seq):
+        padded_sequence = np.zeros((self.max_len, seq.shape[1]))
+        padded_sequence[-seq.shape[0]:, :] = seq  # Pad at the beginning
+
+        mask = np.ones(self.max_len)
+        mask[-seq.shape[0]:] = 0
+
+        return padded_sequence

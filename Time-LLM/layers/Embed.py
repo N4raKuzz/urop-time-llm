@@ -174,7 +174,7 @@ class PatchEmbedding(nn.Module):
         # Residual dropout
         self.dropout = nn.Dropout(dropout)
 
-    def forward(self, x):
+    def forward(self, x, mask=None):
         # do patching
         n_vars = x.shape[1]
         x = self.padding_patch_layer(x)
