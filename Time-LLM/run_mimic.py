@@ -27,7 +27,7 @@ torch.manual_seed(fix_seed)
 np.random.seed(fix_seed)
 
 # basic config
-parser.add_argument('--task_name', type=str, required=True, default='long_term_forecast',
+parser.add_argument('--task_name', type=str, required=True, default='short_term_forecast',
                     help='task name, options:[long_term_forecast, short_term_forecast, imputation, classification, anomaly_detection]')
 parser.add_argument('--is_training', type=int, required=True, default=1, help='status')
 parser.add_argument('--model_id', type=str, required=True, default='test', help='model id')
@@ -37,7 +37,7 @@ parser.add_argument('--model', type=str, required=True, default='TimeLLM',
 parser.add_argument('--seed', type=int, default=2021, help='random seed')
 
 # data loader
-parser.add_argument('--data', type=str, required=True, default='ETTm1', help='dataset type')
+parser.add_argument('--data', type=str, required=True, default='MIMIC', help='dataset type')
 parser.add_argument('--root_path', type=str, default='./dataset/MIMIC/', help='root path of the data file')
 parser.add_argument('--data_path', type=str, default='MIMICtable_261219.csv', help='data file')
 parser.add_argument('--features', type=str, default='M',
@@ -77,7 +77,7 @@ parser.add_argument('--output_attention', action='store_true', help='whether to 
 parser.add_argument('--patch_len', type=int, default=8, help='patch length')
 parser.add_argument('--stride', type=int, default=4, help='stride')
 parser.add_argument('--prompt_domain', type=int, default=0, help='')
-parser.add_argument('--llm_model', type=str, default='GPT2', help='LLM model') # LLAMA, GPT2, BERT
+parser.add_argument('--llm_model', type=str, default='LLAMA', help='LLM model') # LLAMA, GPT2, BERT
 parser.add_argument('--llm_dim', type=int, default='768', help='LLM model dimension')# LLama7b:4096; GPT2-small:768; BERT-base:768
 
 

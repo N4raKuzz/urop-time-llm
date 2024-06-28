@@ -46,43 +46,11 @@ class Model(nn.Module):
             self.llama_config.num_hidden_layers = configs.llm_layers
             self.llama_config.output_attentions = True
             self.llama_config.output_hidden_states = True
-            try:
-                self.llm_model = LlamaModel.from_pretrained(
-                    # "/mnt/alps/modelhub/pretrained_model/LLaMA/7B_hf/",
-                    'huggyllama/llama-7b',
-                    trust_remote_code=True,
-                    local_files_only=True,
-                    config=self.llama_config,
-                    # load_in_4bit=True
-                )
-            except EnvironmentError:  # downloads model from HF is not already done
-                print("Local model files not found. Attempting to download...")
-                self.llm_model = LlamaModel.from_pretrained(
-                    # "/mnt/alps/modelhub/pretrained_model/LLaMA/7B_hf/",
-                    'huggyllama/llama-7b',
-                    trust_remote_code=True,
-                    local_files_only=False,
-                    config=self.llama_config,
-                    # load_in_4bit=True
-                )
-            try:
-                self.tokenizer = LlamaTokenizer.from_pretrained(
-                    # "/mnt/alps/modelhub/pretrained_model/LLaMA/7B_hf/tokenizer.model",
-                    'huggyllama/llama-7b',
-                    trust_remote_code=True,
-                    local_files_only=True
-                )
-            except EnvironmentError:  # downloads the tokenizer from HF if not already done
-                print("Local tokenizer files not found. Atempting to download them..")
-                self.tokenizer = LlamaTokenizer.from_pretrained(
-                    # "/mnt/alps/modelhub/pretrained_model/LLaMA/7B_hf/tokenizer.model",
-                    'huggyllama/llama-7b',
-                    trust_remote_code=True,
-                    local_files_only=False
-                )
+            self.llm_model = LlamaModel.from_pretrained('huggyllama/llama-7b',config=self.llama_config)
+            self.tokenizer = LlamaTokenizer.from_pretrained('huggyllama/llama-7b')
+
         elif configs.llm_model == 'GPT2':
             self.gpt2_config = GPT2Config.from_pretrained('openai-community/gpt2')
-
             self.gpt2_config.num_hidden_layers = configs.llm_layers
             self.gpt2_config.output_attentions = True
             self.gpt2_config.output_hidden_states = True

@@ -33,7 +33,7 @@ def data_provider(args, flag):
             root_path=args.root_path,
             data_path=args.data_path,
             flag=flag,
-            max=args.seq_len,
+            max_len=args.seq_len,
             features=args.features,
             target=args.target,
             timeenc=timeenc,

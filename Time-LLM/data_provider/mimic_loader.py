@@ -6,6 +6,7 @@ import os
 import numpy as np
 import pandas as pd
 from torch.utils.data import Dataset
+from sklearn.preprocessing import StandardScaler
 import warnings
 
 warnings.filterwarnings('ignore')
@@ -30,25 +31,37 @@ class Dataset_MIMIC(Dataset):
         self.__read_data__()
 
     def __read_data__(self):
+        self.scaler = StandardScaler()
         df_raw = pd.read_csv(os.path.join(self.root_path,
                                           self.data_path))
         
+        # Define and Seperate Columns
         action_indices = [69, 72]
         continuous_obs_indices = [6] + list(range(13, 22)) + list(range(23, 29)) + [30, 31] + list(range(34, 44)) + list(
             range(45, 49)) + list(range(52, 63)) + [71] + list(range(73, 78))
         binary_obs_indices = [5, 49, 50, 70]
         obs_indices = continuous_obs_indices + binary_obs_indices
         obs_action_indices = obs_indices + action_indices
+        columns = df_raw.columns
+        columns_to_use = df_raw.columns[obs_action_indices]
 
-        columns = df_raw.columns[obs_action_indices]
-        grouped = df_raw.groupby('icustayid')
+        #Scale continuous observe data and combine with action data
+        df_to_scale = df_raw[continuous_obs_indices]
+        columns_to_scale = df_to_scale.columns
+        df_not_to_scale = df_raw.drop(columns=continuous_obs_indices)
+        self.scaler.fit(df_to_scale)
+        df_scaled = pd.DataFrame(self.scaler.fit_transform(df_to_scale), columns=columns_to_scale)
+        df_combined = pd.concat([df_scaled, df_not_to_scale], axis=1)
+        df_combined = df_combined[columns]
+        
+        grouped = df_combined.groupby('icustayid')
         
         self.data_x = []
         self.data_y = []
 
         for _, group in grouped:
             self.tot_len += 1
-            group = group[columns]
+            group = group[columns_to_use]
             x = group.iloc[:-1].to_numpy()  # Convert DataFrame to NumPy array
             y = group.iloc[-1].to_numpy()  # Convert Series to NumPy array
             self.data_x.append(x)
@@ -73,4 +86,4 @@ class Dataset_MIMIC(Dataset):
         mask = np.ones(self.max_len)
         mask[-seq.shape[0]:] = 0
 
-        return padded_sequence
+        return padded_sequence, mask
