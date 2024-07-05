@@ -1,25 +1,24 @@
 model_name=TimeLLM
-train_epochs=1
-learning_rate=0.01
+train_epochs=10
+learning_rate=0.02
 llama_layers=8
-batch_size=24
+batch_size=4
 d_model=32
 d_ff=128
 
-comment='TimeLLM-ETTh1'
+comment='MIMIC_8_1'
 
-python run_main.py \
+python run_mimic.py \
   --task_name short_term_forecast \
   --is_training 1 \
-  --root_path ./dataset/ETT-small/ \
-  --data_path ETTh1.csv \
-  --model_id ETTh1_512_96 \
+  --root_path ./dataset/MIMIC/ \
+  --data_path MIMICtable_261219.csv \
+  --model_id MIMIC_8_1 \
   --model $model_name \
-  --data ETTh1 \
+  --data MIMIC \
   --features M \
-  --seq_len 512 \
-  --label_len 48 \
-  --pred_len 96 \
+  --seq_len 8 \
+  --pred_len 1 \
   --factor 3 \
   --enc_in 7 \
   --dec_in 7 \

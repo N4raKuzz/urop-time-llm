@@ -4,25 +4,16 @@ from torch import nn, optim
 from torch.optim import lr_scheduler
 from tqdm import tqdm
 
-from models import TimeLLM_mimic
+from models import LSTM
 from data_provider.data_factory import data_provider
+from sklearn.metrics import mean_absolute_error, mean_squared_error
 
 import time
 import random
 import numpy as np
 import os
 
-os.environ['CURL_CA_BUNDLE'] = ''
-os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "max_split_size_mb:64"
-
-from utils.tools import del_files, EarlyStopping, adjust_learning_rate, vali, load_content
-
-parser = argparse.ArgumentParser(description='Time-LLM')
-
-fix_seed = 2021
-random.seed(fix_seed)
-torch.manual_seed(fix_seed)
-np.random.seed(fix_seed)
+parser = argparse.ArgumentParser(description='LSTM')
 
 # basic config
 parser.add_argument('--task_name', type=str, default='short_term_forecast',
@@ -30,7 +21,7 @@ parser.add_argument('--task_name', type=str, default='short_term_forecast',
 parser.add_argument('--is_training', type=int, default=1, help='status')
 parser.add_argument('--model_id', type=str, default='test', help='model id')
 parser.add_argument('--model_comment', type=str, default='none', help='prefix when saving test results')
-parser.add_argument('--model', type=str, default='TimeLLM',
+parser.add_argument('--model', type=str, default='LSTM',
                     help='model name, options: [Autoformer, DLinear]')
 parser.add_argument('--seed', type=int, default=2021, help='random seed')
 
@@ -51,8 +42,8 @@ parser.add_argument('--freq', type=str, default='h',
 parser.add_argument('--checkpoints', type=str, default='./checkpoints/', help='location of model checkpoints')
 
 # forecasting task
-parser.add_argument('--seq_len', type=int, default=80, help='input sequence length')
-parser.add_argument('--label_len', type=int, default=48, help='start token length')
+parser.add_argument('--seq_len', type=int, default=8, help='input sequence length')
+parser.add_argument('--label_len', type=int, default=51, help='start token length')
 parser.add_argument('--pred_len', type=int, default=1, help='prediction sequence length')
 parser.add_argument('--seasonal_patterns', type=str, default='Monthly', help='subset for M4')
 
@@ -87,7 +78,7 @@ parser.add_argument('--align_epochs', type=int, default=10, help='alignment epoc
 parser.add_argument('--batch_size', type=int, default=8, help='batch size of train input data')
 parser.add_argument('--eval_batch_size', type=int, default=8, help='batch size of model evaluation')
 parser.add_argument('--patience', type=int, default=10, help='early stopping patience')
-parser.add_argument('--learning_rate', type=float, default=0.0001, help='optimizer learning rate')
+parser.add_argument('--learning_rate', type=float, default=0.002, help='optimizer learning rate')
 parser.add_argument('--des', type=str, default='test', help='exp description')
 parser.add_argument('--loss', type=str, default='MSE', help='loss function')
 parser.add_argument('--lradj', type=str, default='type1', help='adjust learning rate')
@@ -98,113 +89,93 @@ parser.add_argument('--percent', type=int, default=100)
 
 args = parser.parse_args()
 
+def evaluate(model, test_loader, criterion, device):
+    model.eval()
+    total_loss = 0
+    predictions = []
+    targets = []
+    print('Evaluation on Test set...')
+    with torch.no_grad():
+
+        for batch_x, batch_y, seq_mask in test_loader:
+            batch_x = batch_x.float().to(device)
+            batch_y = batch_y.float().to(device)
+            
+            outputs = model(batch_x).to(device)
+            loss = criterion(outputs, batch_y)
+            
+            total_loss += loss.item() * batch_x.size(0)
+            predictions.extend(outputs.cpu().numpy())
+            targets.extend(batch_y.cpu().numpy())
+
+    predictions = np.array(predictions).reshape(-1, 49)
+    targets = np.array(targets).reshape(-1, 49)
+
+    mae = mean_absolute_error(targets, predictions)
+    mse = mean_squared_error(targets, predictions)
+
+    print(f'MAE: {mae:.4f}')
+    print(f'MSE: {mse:.4f}')
+
+
 for ii in range(args.itr):
-    # setting record of experiments
-    setting = '{}_{}_{}_{}_ft{}_sl{}_ll{}_pl{}_dm{}_nh{}_el{}_dl{}_df{}_fc{}_eb{}_{}_{}'.format(
-        args.task_name,
-        args.model_id,
-        args.model,
-        args.data,
-        args.features,
-        args.seq_len,
-        args.label_len,
-        args.pred_len,
-        args.d_model,
-        args.n_heads,
-        args.e_layers,
-        args.d_layers,
-        args.d_ff,
-        args.factor,
-        args.embed,
-        args.des, ii)
 
     train_data, train_loader = data_provider(args, 'train')
     test_data, test_loader = data_provider(args, 'test')
+
+    time_now = time.time()
+    train_steps = len(train_loader)
 
     device = torch.device("cuda")
     print(f"Device name: {torch.cuda.get_device_name(device.index)}")
     print(f"Device memory: {torch.cuda.get_device_properties(device.index).total_memory / 1024 ** 3} GB")
 
-    model = TimeLLM_mimic.Model(args).float().to(device)
-
-    time_now = time.time()
-
-    train_steps = len(train_loader)
-
-    trained_parameters = []
-    for p in model.parameters():
-        if p.requires_grad is True:
-            trained_parameters.append(p)
-
-    model_optim = optim.Adam(trained_parameters, lr=args.learning_rate)
-
-    if args.lradj == 'COS':
-        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(model_optim, T_max=20, eta_min=1e-8)
-    else:
-        scheduler = lr_scheduler.OneCycleLR(optimizer=model_optim,
-                                            steps_per_epoch=train_steps,
-                                            pct_start=args.pct_start,
-                                            epochs=args.train_epochs,
-                                            max_lr=args.learning_rate)
+    # Create model, loss function, and optimizer
+    # LSTM(in_features, hidden_size, num_layers, out_features)
+    model = LSTM.Model(label_len, label_len, seq_len, 49).to(device)
 
     criterion = nn.MSELoss()
-    mae_metric = nn.L1Loss()
+    model_optim = optim.Adam(model.parameters(), lr=args.learning_rate)
 
-    if args.use_amp:
-        scaler = torch.cuda.amp.GradScaler()
-
+    # Training loop
     for epoch in range(args.train_epochs):
         iter_count = 0
-        train_loss = []
+        total_loss = 0
 
         model.train()
         epoch_time = time.time()
+        
         for i, (batch_x, batch_y, seq_mask) in tqdm(enumerate(train_loader)):
             iter_count += 1
-            model_optim.zero_grad()
+            model_optim.zero_grad()       
 
             batch_x = batch_x.float().to(device)
             batch_y = batch_y.float().to(device)
+            # print(f'x shape {batch_x.shape}')
+            # print(f'y shape {batch_y.shape}')
+            # x shape: (batch, seq_len, n_features)
+            # y shape: (batch, 1, n_features)
             seq_mask = seq_mask.to(device)
-            dec_inp = torch.zeros_like(batch_y[:, :]).float().to(device)
-            dec_inp = torch.cat([batch_y[:, :], dec_inp], dim=1).float().to(device)
-
-            outputs = model(batch_x, seq_mask).to(device)
-            f_dim = -1 if args.features == 'MS' else 0
-            outputs = outputs[:, -args.pred_len:, f_dim:]
-            batch_y = batch_y[:, f_dim:]
             
+            outputs = model(batch_x).to(device)
             loss = criterion(outputs, batch_y)
-            train_loss.append(loss.item())
-
             loss.backward()
             model_optim.step()
-
-            if (i + 1) % 100 == 0:
+            
+            total_loss += loss.item()
+            if (i + 1) % 500 == 0:
                 print("\titers: {0}, epoch: {1} | loss: {2:.7f}".format(i + 1, epoch + 1, loss.item()))
                 speed = (time.time() - time_now) / iter_count
                 left_time = speed * ((args.train_epochs - epoch) * train_steps - i)
                 print('\tspeed: {:.4f}s/iter; left time: {:.4f}s'.format(speed, left_time))
                 iter_count = 0
                 time_now = time.time()
+        
+        avg_loss = total_loss / train_steps
+        print(f'Epoch [{epoch+1}/{args.train_epochs}], Loss: {avg_loss:.4f}')
 
-        print("Epoch: {} cost time: {}".format(epoch + 1, time.time() - epoch_time))
-        train_loss = np.average(train_loss)
-        print("Epoch: {0} | Train Loss: {1:.7f}".format(epoch + 1, train_loss))
+        evaluate(model, test_loader, criterion, device)
 
-        if args.lradj != 'TST':
-            if args.lradj == 'COS':
-                scheduler.step()
-                print("lr = {:.10f}".format(model_optim.param_groups[0]['lr']))
-            else:
-                if epoch == 0:
-                    args.learning_rate = model_optim.param_groups[0]['lr']
-                    print("lr = {:.10f}".format(model_optim.param_groups[0]['lr']))
-                adjust_learning_rate(model_optim, scheduler, epoch + 1, args, printout=True)
 
-        else:
-            print('Updating learning rate to {}'.format(scheduler.get_last_lr()[0]))
 
-    print('Training complete for iteration {}'.format(ii))
 
-print('All iterations completed.')

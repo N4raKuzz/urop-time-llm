@@ -51,7 +51,7 @@ parser.add_argument('--freq', type=str, default='h',
 parser.add_argument('--checkpoints', type=str, default='./checkpoints/', help='location of model checkpoints')
 
 # forecasting task
-parser.add_argument('--seq_len', type=int, default=96, help='input sequence length')
+parser.add_argument('--seq_len', type=int, default=512, help='input sequence length')
 parser.add_argument('--label_len', type=int, default=48, help='start token length')
 parser.add_argument('--pred_len', type=int, default=96, help='prediction sequence length')
 parser.add_argument('--seasonal_patterns', type=str, default='Monthly', help='subset for M4')
@@ -75,8 +75,8 @@ parser.add_argument('--output_attention', action='store_true', help='whether to 
 parser.add_argument('--patch_len', type=int, default=16, help='patch length')
 parser.add_argument('--stride', type=int, default=8, help='stride')
 parser.add_argument('--prompt_domain', type=int, default=0, help='')
-parser.add_argument('--llm_model', type=str, default='GPT2', help='LLM model') # LLAMA, GPT2, BERT
-parser.add_argument('--llm_dim', type=int, default='768', help='LLM model dimension')# LLama7b:4096; GPT2-small:768; BERT-base:768
+parser.add_argument('--llm_model', type=str, default='LLAMA', help='LLM model') # LLAMA, GPT2, BERT
+parser.add_argument('--llm_dim', type=int, default='4096', help='LLM model dimension')# LLama7b:4096; GPT2-small:768; BERT-base:768
 
 
 # optimization
@@ -119,14 +119,8 @@ for ii in range(args.itr):
         args.des, ii)
 
     train_data, train_loader = data_provider(args, 'train')
-    vali_data, vali_loader = data_provider(args, 'val')
     test_data, test_loader = data_provider(args, 'test')
 
-    # if args.model == 'Autoformer':
-    #     model = Autoformer.Model(args).float()
-    # elif args.model == 'DLinear':
-    #     model = DLinear.Model(args).float()
-    # else:
     model = TimeLLM.Model(args).float()
 
     path = os.path.join(args.checkpoints,
@@ -143,7 +137,7 @@ for ii in range(args.itr):
 
     model_optim = optim.Adam(trained_parameters, lr=args.learning_rate)
 
-    device = torch.device("cuda" if torch.cuda.is_initialized() else "cpu")
+    device = torch.device("cuda")
     print(f"Device name: {torch.cuda.get_device_name(device.index)}")
     print(f"Device memory: {torch.cuda.get_device_properties(device.index).total_memory / 1024 ** 3} GB")
 
@@ -181,9 +175,11 @@ for ii in range(args.itr):
             dec_inp = torch.zeros_like(batch_y[:, -args.pred_len:, :]).float().to(device)
             dec_inp = torch.cat([batch_y[:, :args.label_len, :], dec_inp], dim=1).float().to(device)
 
+            outputs = model(batch_x, batch_x_mark, dec_inp, batch_y_mark)
+
             f_dim = -1 if args.features == 'MS' else 0
             outputs = outputs[:, -args.pred_len:, f_dim:]
-            batch_y = batch_y[:, -args.pred_len:, f_dim:]
+            batch_y = batch_y[:, f_dim:]
             loss = criterion(outputs, batch_y)
             train_loss.append(loss.item())
 

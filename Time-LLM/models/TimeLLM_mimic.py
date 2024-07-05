@@ -49,75 +49,6 @@ class Model(nn.Module):
             self.llm_model = LlamaModel.from_pretrained('huggyllama/llama-7b',config=self.llama_config)
             self.tokenizer = LlamaTokenizer.from_pretrained('huggyllama/llama-7b')
 
-        elif configs.llm_model == 'GPT2':
-            self.gpt2_config = GPT2Config.from_pretrained('openai-community/gpt2')
-            self.gpt2_config.num_hidden_layers = configs.llm_layers
-            self.gpt2_config.output_attentions = True
-            self.gpt2_config.output_hidden_states = True
-            try:
-                self.llm_model = GPT2Model.from_pretrained(
-                    'openai-community/gpt2',
-                    trust_remote_code=True,
-                    local_files_only=True,
-                    config=self.gpt2_config,
-                )
-            except EnvironmentError:  # downloads model from HF is not already done
-                print("Local model files not found. Attempting to download...")
-                self.llm_model = GPT2Model.from_pretrained(
-                    'openai-community/gpt2',
-                    trust_remote_code=True,
-                    local_files_only=False,
-                    config=self.gpt2_config,
-                )
-
-            try:
-                self.tokenizer = GPT2Tokenizer.from_pretrained(
-                    'openai-community/gpt2',
-                    trust_remote_code=True,
-                    local_files_only=True
-                )
-            except EnvironmentError:  # downloads the tokenizer from HF if not already done
-                print("Local tokenizer files not found. Atempting to download them..")
-                self.tokenizer = GPT2Tokenizer.from_pretrained(
-                    'openai-community/gpt2',
-                    trust_remote_code=True,
-                    local_files_only=False
-                )
-        elif configs.llm_model == 'BERT':
-            self.bert_config = BertConfig.from_pretrained('google-bert/bert-base-uncased')
-
-            self.bert_config.num_hidden_layers = configs.llm_layers
-            self.bert_config.output_attentions = True
-            self.bert_config.output_hidden_states = True
-            try:
-                self.llm_model = BertModel.from_pretrained(
-                    'google-bert/bert-base-uncased',
-                    trust_remote_code=True,
-                    local_files_only=True,
-                    config=self.bert_config,
-                )
-            except EnvironmentError:  # downloads model from HF is not already done
-                print("Local model files not found. Attempting to download...")
-                self.llm_model = BertModel.from_pretrained(
-                    'google-bert/bert-base-uncased',
-                    trust_remote_code=True,
-                    local_files_only=False,
-                    config=self.bert_config,
-                )
-
-            try:
-                self.tokenizer = BertTokenizer.from_pretrained(
-                    'google-bert/bert-base-uncased',
-                    trust_remote_code=True,
-                    local_files_only=True
-                )
-            except EnvironmentError:  # downloads the tokenizer from HF if not already done
-                print("Local tokenizer files not found. Atempting to download them..")
-                self.tokenizer = BertTokenizer.from_pretrained(
-                    'google-bert/bert-base-uncased',
-                    trust_remote_code=True,
-                    local_files_only=False
-                )
         else:
             raise Exception('LLM model is not defined')
 
@@ -166,8 +97,9 @@ class Model(nn.Module):
 
     def forecast(self, x_enc, mask=None):
 
+        print('Start Forecasting')
         x_enc = self.normalize_layers(x_enc, 'norm')
-
+        print(f'x shape: {x_enc.shape}')
         B, T, N = x_enc.size()
         x_enc = x_enc.permute(0, 2, 1).contiguous().reshape(B * N, T, 1)
 
@@ -189,20 +121,33 @@ class Model(nn.Module):
             )
 
             prompt.append(prompt_)
+        
+
+        # prompt = (
+        #         f"<|start_prompt|>Dataset description: {self.description}"
+        #         "Task description: forecast the next status given the previous time sequence information;"                
+        #     )
 
         x_enc = x_enc.reshape(B, N, T).permute(0, 2, 1).contiguous()
-
+        
+        # print(f'Prompt: {prompt}')
         prompt = self.tokenizer(prompt, return_tensors="pt", padding=True, truncation=True, max_length=2048).input_ids
         prompt_embeddings = self.llm_model.get_input_embeddings()(prompt.to(x_enc.device))  # (batch, prompt_token, dim)
 
         source_embeddings = self.mapping_layer(self.word_embeddings.permute(1, 0)).permute(1, 0)
 
+        print('Patch Reprogramming')
         x_enc = x_enc.permute(0, 2, 1).contiguous()
-        enc_out, n_vars = self.patch_embedding(x_enc.to(torch.bfloat16), mask)
+        print(f'x shape: {x_enc.shape}')
+        enc_out, n_vars = self.patch_embedding(x_enc, mask)
+        print(f'x shape after patch embedding: {enc_out.shape}')
         enc_out = self.reprogramming_layer(enc_out, source_embeddings, source_embeddings)
+        print(f'x shape after reprogramming: {enc_out.shape}')
         llama_enc_out = torch.cat([prompt_embeddings, enc_out], dim=1)
+        print(f'llama input/enc_out: {llama_enc_out.shape}')
         dec_out = self.llm_model(inputs_embeds=llama_enc_out).last_hidden_state
         dec_out = dec_out[:, :, :self.d_ff]
+        print(f'decoder ouput: {dec_out.shape}')
 
         dec_out = torch.reshape(
             dec_out, (-1, n_vars, dec_out.shape[-2], dec_out.shape[-1]))
@@ -212,7 +157,7 @@ class Model(nn.Module):
         dec_out = dec_out.permute(0, 2, 1).contiguous()
 
         dec_out = self.normalize_layers(dec_out, 'denorm')
-
+        print('Finish Forcasting')
         return dec_out
 
     def calcute_lags(self, x_enc):
