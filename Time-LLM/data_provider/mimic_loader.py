@@ -31,34 +31,28 @@ class Dataset_MIMIC(Dataset):
         self.__read_data__()
 
     def __read_data__(self):
-        self.scaler = StandardScaler()
+        
 
         print(f'Reading Dataset {self.data_path} for {self.flag}')
 
         df_raw = pd.read_csv(os.path.join(self.root_path,
                                           self.data_path))
-        
-        # Define and Seperate Columns
-        action_indices = [69, 72]
-        continuous_obs_indices = [6] + list(range(13, 22)) + list(range(23, 29)) + [30, 31] + list(range(34, 44)) + list(range(45, 49)) + list(range(52, 63)) + [71] + list(range(73, 78))
-        binary_obs_indices = [5, 49, 50, 70]
-        obs_indices = continuous_obs_indices #+ binary_obs_indices
-        obs_action_indices = obs_indices + action_indices
 
-        columns = df_raw.columns.to_numpy()
-        columns_obs_action = df_raw.columns[obs_action_indices]
-        colums_obs = df_raw.columns[obs_indices]
-
+        self.columns = df_raw.columns.to_numpy()
+        self.columns_output = df_raw.columns[list(3,49)]
+        self.columns_input = df_raw.columns[list(1,55)]
         #Scale continuous observe data and combine with action data
-        df_to_scale = df_raw.iloc[:, continuous_obs_indices]
-        df_not_to_scale = df_raw.drop(columns=df_raw.columns[continuous_obs_indices])
+
+        self.scaler = StandardScaler()
+        df_to_scale = df_raw[self.columns_obs]
+        df_not_to_scale = df_raw.drop(columns=self.columns_obs)
         scaled_data = self.scaler.fit_transform(df_to_scale)
 
         combined_data = np.empty(df_raw.shape, dtype=df_raw.dtypes[0])
-        combined_data[:, continuous_obs_indices] = scaled_data
-        combined_data[:, np.setdiff1d(np.arange(df_raw.shape[1]), continuous_obs_indices)] = df_not_to_scale.values
+        combined_data[:, list(3,49)] = scaled_data
+        combined_data[:, np.setdiff1d(np.arange(df_raw.shape[1]), list(3,49))] = df_not_to_scale.values
 
-        df_combined = pd.DataFrame(combined_data, columns=columns)
+        df_combined = pd.DataFrame(combined_data, columns=self.columns)
         
         grouped = df_combined.groupby('icustayid')
         
@@ -69,9 +63,9 @@ class Dataset_MIMIC(Dataset):
 
         for _, group in grouped:
             if len(group) > self.max_len:
-                group_x = group[columns_obs_action]
+                group_x = group[self.columns_input]
                 x = group_x.iloc[-self.max_len-1:-1].to_numpy()
-                group_y = group[colums_obs]
+                group_y = group[self.columns_output]
                 y = group_y.iloc[-1].to_numpy() 
 
                 if len(train_data_x) < 16000:
@@ -93,15 +87,21 @@ class Dataset_MIMIC(Dataset):
 
 
     def __getitem__(self, index):
-        #seq_x, mask_x = self.pad_sequence(self.data_x[index])
+        # seq_x, mask_x = self.pad_sequence(self.data_x[index])
         seq_x = self.data_x[index]
-        mask_x = np.zeros(self.max_len)
+        # mask_x = np.zeros(self.max_len)
         seq_y = self.data_y[index]
         
-        return seq_x, seq_y, mask_x
+        return seq_x, seq_y
 
     def __len__(self):
         return self.tot_len
+    
+    def get_scaler(self):
+        return self.scaler
+    
+    def get_columns(self):
+        return self.columns_input, self.columns_output
 
     def pad_sequence(self, seq):
         padded_sequence = np.zeros((self.max_len, seq.shape[1]))

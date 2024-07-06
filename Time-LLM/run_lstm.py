@@ -89,7 +89,7 @@ parser.add_argument('--percent', type=int, default=100)
 
 args = parser.parse_args()
 
-def evaluate(model, test_loader, criterion, device):
+def evaluate(model, test_loader, criterion, columns, scaler device):
     model.eval()
     total_loss = 0
     predictions = []
@@ -114,67 +114,76 @@ def evaluate(model, test_loader, criterion, device):
     mae = mean_absolute_error(targets, predictions)
     mse = mean_squared_error(targets, predictions)
 
-    print(f'MAE: {mae:.4f}')
-    print(f'MSE: {mse:.4f}')
+    print(f'Overall MAE: {mae:.4f}')
+    print(f'Overall MSE: {mse:.4f}')
+
+    print('Scale Inverse transforming...')
+    predictions = np.clip(predictions, 0, None)
+    predictions_scaled = scaler.inverse_transform(predictions)
+    targets_scaled = scaler.inverse_transform(targets)
+
+    for i, column in enumerate(columns):
+        feature_mae = mean_absolute_error(targets_scaled[:, i], predictions_scaled[:, i])
+        print(f'{column} MAE: {feature_mae:.4f}')
 
 
-for ii in range(args.itr):
+train_data, train_loader = data_provider(args, 'train')
+test_data, test_loader = data_provider(args, 'test')
 
-    train_data, train_loader = data_provider(args, 'train')
-    test_data, test_loader = data_provider(args, 'test')
+scaler = train_data.get_scaler()
+columns_in, columns_out = train_data.get_columns()
 
-    time_now = time.time()
-    train_steps = len(train_loader)
+time_now = time.time()
+train_steps = len(train_loader)
 
-    device = torch.device("cuda")
-    print(f"Device name: {torch.cuda.get_device_name(device.index)}")
-    print(f"Device memory: {torch.cuda.get_device_properties(device.index).total_memory / 1024 ** 3} GB")
+device = torch.device("cuda")
+print(f"Device name: {torch.cuda.get_device_name(device.index)}")
+print(f"Device memory: {torch.cuda.get_device_properties(device.index).total_memory / 1024 ** 3} GB")
 
-    # Create model, loss function, and optimizer
-    # LSTM(in_features, hidden_size, num_layers, out_features)
-    model = LSTM.Model(label_len, label_len, seq_len, 49).to(device)
+# Create model, loss function, and optimizer
+# LSTM(in_features, hidden_size, num_layers, out_features)
+model = LSTM.Model(55, 49, 8, 49).to(device)
 
-    criterion = nn.MSELoss()
-    model_optim = optim.Adam(model.parameters(), lr=args.learning_rate)
+criterion = nn.MSELoss()
+model_optim = optim.Adam(model.parameters(), lr=args.learning_rate)
 
-    # Training loop
-    for epoch in range(args.train_epochs):
-        iter_count = 0
-        total_loss = 0
+# Training loop
+for epoch in range(args.train_epochs):
+    iter_count = 0
+    total_loss = 0
 
-        model.train()
-        epoch_time = time.time()
+    model.train()
+    epoch_time = time.time()
+    
+    for i, (batch_x, batch_y) in tqdm(enumerate(train_loader)):
+        iter_count += 1
+        model_optim.zero_grad()       
+
+        batch_x = batch_x.float().to(device)
+        batch_y = batch_y.float().to(device)
+        # print(f'x shape {batch_x.shape}')
+        # print(f'y shape {batch_y.shape}')
+        # x shape: (batch, seq_len, n_features)
+        # y shape: (batch, 1, n_features)
         
-        for i, (batch_x, batch_y, seq_mask) in tqdm(enumerate(train_loader)):
-            iter_count += 1
-            model_optim.zero_grad()       
-
-            batch_x = batch_x.float().to(device)
-            batch_y = batch_y.float().to(device)
-            # print(f'x shape {batch_x.shape}')
-            # print(f'y shape {batch_y.shape}')
-            # x shape: (batch, seq_len, n_features)
-            # y shape: (batch, 1, n_features)
-            seq_mask = seq_mask.to(device)
-            
-            outputs = model(batch_x).to(device)
-            loss = criterion(outputs, batch_y)
-            loss.backward()
-            model_optim.step()
-            
-            total_loss += loss.item()
-            if (i + 1) % 500 == 0:
-                print("\titers: {0}, epoch: {1} | loss: {2:.7f}".format(i + 1, epoch + 1, loss.item()))
-                speed = (time.time() - time_now) / iter_count
-                left_time = speed * ((args.train_epochs - epoch) * train_steps - i)
-                print('\tspeed: {:.4f}s/iter; left time: {:.4f}s'.format(speed, left_time))
-                iter_count = 0
-                time_now = time.time()
+        outputs = model(batch_x).to(device)
+        loss = criterion(outputs, batch_y)
+        loss.backward()
+        model_optim.step()
         
-        avg_loss = total_loss / train_steps
-        print(f'Epoch [{epoch+1}/{args.train_epochs}], Loss: {avg_loss:.4f}')
+        total_loss += loss.item()
+        if (i + 1) % 500 == 0:
+            print("\titers: {0}, epoch: {1} | loss: {2:.7f}".format(i + 1, epoch + 1, loss.item()))
+            speed = (time.time() - time_now) / iter_count
+            left_time = speed * ((args.train_epochs - epoch) * train_steps - i)
+            print('\tspeed: {:.4f}s/iter; left time: {:.4f}s'.format(speed, left_time))
+            iter_count = 0
+            time_now = time.time()
+    
+    avg_loss = total_loss / train_steps
+    print(f'Epoch [{epoch+1}/{args.train_epochs}], Loss: {avg_loss:.4f}')
 
-        evaluate(model, test_loader, criterion, device)
+    evaluate(model, test_loader, criterion, columns_out, scaler, device)
 
 
 
