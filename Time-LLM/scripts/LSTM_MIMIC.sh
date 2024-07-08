@@ -11,7 +11,7 @@ python run_lstm.py \
   --task_name short_term_forecast \
   --is_training 1 \
   --root_path ./dataset/MIMIC/ \
-  --data_path MIMICtable_261219.csv \
+  --data_path MIMIC_8_1.csv \
   --model_id MIMIC_8_1 \
   --model $model_name \
   --data MIMIC \

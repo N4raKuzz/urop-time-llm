@@ -89,7 +89,7 @@ parser.add_argument('--percent', type=int, default=100)
 
 args = parser.parse_args()
 
-def evaluate(model, test_loader, criterion, columns, scaler device):
+def evaluate(model, test_loader, criterion, columns, scaler, device):
     model.eval()
     total_loss = 0
     predictions = []
@@ -97,7 +97,7 @@ def evaluate(model, test_loader, criterion, columns, scaler device):
     print('Evaluation on Test set...')
     with torch.no_grad():
 
-        for batch_x, batch_y, seq_mask in test_loader:
+        for batch_x, batch_y in test_loader:
             batch_x = batch_x.float().to(device)
             batch_y = batch_y.float().to(device)
             
@@ -108,8 +108,8 @@ def evaluate(model, test_loader, criterion, columns, scaler device):
             predictions.extend(outputs.cpu().numpy())
             targets.extend(batch_y.cpu().numpy())
 
-    predictions = np.array(predictions).reshape(-1, 49)
-    targets = np.array(targets).reshape(-1, 49)
+    predictions = np.array(predictions).reshape(-1, 48)
+    targets = np.array(targets).reshape(-1, 48)
 
     mae = mean_absolute_error(targets, predictions)
     mse = mean_squared_error(targets, predictions)
@@ -133,6 +133,9 @@ test_data, test_loader = data_provider(args, 'test')
 scaler = train_data.get_scaler()
 columns_in, columns_out = train_data.get_columns()
 
+print(f"Input Columns:{columns_in}")
+print(f"Output Columns:{columns_out}")
+
 time_now = time.time()
 train_steps = len(train_loader)
 
@@ -142,7 +145,7 @@ print(f"Device memory: {torch.cuda.get_device_properties(device.index).total_mem
 
 # Create model, loss function, and optimizer
 # LSTM(in_features, hidden_size, num_layers, out_features)
-model = LSTM.Model(55, 49, 8, 49).to(device)
+model = LSTM.Model(55, 55, 8, 48).to(device)
 
 criterion = nn.MSELoss()
 model_optim = optim.Adam(model.parameters(), lr=args.learning_rate)
@@ -183,7 +186,7 @@ for epoch in range(args.train_epochs):
     avg_loss = total_loss / train_steps
     print(f'Epoch [{epoch+1}/{args.train_epochs}], Loss: {avg_loss:.4f}')
 
-    evaluate(model, test_loader, criterion, columns_out, scaler, device)
+evaluate(model, test_loader, criterion, columns_out, scaler, device)
 
 
 

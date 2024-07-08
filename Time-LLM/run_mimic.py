@@ -98,113 +98,157 @@ parser.add_argument('--percent', type=int, default=100)
 
 args = parser.parse_args()
 
-for ii in range(args.itr):
-    # setting record of experiments
-    setting = '{}_{}_{}_{}_ft{}_sl{}_ll{}_pl{}_dm{}_nh{}_el{}_dl{}_df{}_fc{}_eb{}_{}_{}'.format(
-        args.task_name,
-        args.model_id,
-        args.model,
-        args.data,
-        args.features,
-        args.seq_len,
-        args.label_len,
-        args.pred_len,
-        args.d_model,
-        args.n_heads,
-        args.e_layers,
-        args.d_layers,
-        args.d_ff,
-        args.factor,
-        args.embed,
-        args.des, ii)
+def evaluate(model, test_loader, criterion, columns, scaler, device):
+    model.eval()
+    total_loss = 0
+    predictions = []
+    targets = []
+    print('Evaluation on Test set...')
+    with torch.no_grad():
 
-    train_data, train_loader = data_provider(args, 'train')
-    test_data, test_loader = data_provider(args, 'test')
-
-    device = torch.device("cuda")
-    print(f"Device name: {torch.cuda.get_device_name(device.index)}")
-    print(f"Device memory: {torch.cuda.get_device_properties(device.index).total_memory / 1024 ** 3} GB")
-
-    model = TimeLLM_mimic.Model(args).float().to(device)
-
-    time_now = time.time()
-
-    train_steps = len(train_loader)
-
-    trained_parameters = []
-    for p in model.parameters():
-        if p.requires_grad is True:
-            trained_parameters.append(p)
-
-    model_optim = optim.Adam(trained_parameters, lr=args.learning_rate)
-
-    if args.lradj == 'COS':
-        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(model_optim, T_max=20, eta_min=1e-8)
-    else:
-        scheduler = lr_scheduler.OneCycleLR(optimizer=model_optim,
-                                            steps_per_epoch=train_steps,
-                                            pct_start=args.pct_start,
-                                            epochs=args.train_epochs,
-                                            max_lr=args.learning_rate)
-
-    criterion = nn.MSELoss()
-    mae_metric = nn.L1Loss()
-
-    if args.use_amp:
-        scaler = torch.cuda.amp.GradScaler()
-
-    for epoch in range(args.train_epochs):
-        iter_count = 0
-        train_loss = []
-
-        model.train()
-        epoch_time = time.time()
-        for i, (batch_x, batch_y, seq_mask) in tqdm(enumerate(train_loader)):
-            iter_count += 1
-            model_optim.zero_grad()
-
+        for batch_x, batch_y in test_loader:
             batch_x = batch_x.float().to(device)
             batch_y = batch_y.float().to(device)
-            seq_mask = seq_mask.to(device)
-            dec_inp = torch.zeros_like(batch_y[:, :]).float().to(device)
-            dec_inp = torch.cat([batch_y[:, :], dec_inp], dim=1).float().to(device)
-
-            outputs = model(batch_x, seq_mask).to(device)
-            f_dim = -1 if args.features == 'MS' else 0
-            outputs = outputs[:, -args.pred_len:, f_dim:]
-            batch_y = batch_y[:, f_dim:]
             
+            outputs = model(batch_x).to(device)
             loss = criterion(outputs, batch_y)
-            train_loss.append(loss.item())
+            
+            total_loss += loss.item() * batch_x.size(0)
+            predictions.extend(outputs.cpu().numpy())
+            targets.extend(batch_y.cpu().numpy())
 
-            loss.backward()
-            model_optim.step()
+    predictions = np.array(predictions).reshape(-1, 48)
+    targets = np.array(targets).reshape(-1, 48)
 
-            if (i + 1) % 100 == 0:
-                print("\titers: {0}, epoch: {1} | loss: {2:.7f}".format(i + 1, epoch + 1, loss.item()))
-                speed = (time.time() - time_now) / iter_count
-                left_time = speed * ((args.train_epochs - epoch) * train_steps - i)
-                print('\tspeed: {:.4f}s/iter; left time: {:.4f}s'.format(speed, left_time))
-                iter_count = 0
-                time_now = time.time()
+    mae = mean_absolute_error(targets, predictions)
+    mse = mean_squared_error(targets, predictions)
 
-        print("Epoch: {} cost time: {}".format(epoch + 1, time.time() - epoch_time))
-        train_loss = np.average(train_loss)
-        print("Epoch: {0} | Train Loss: {1:.7f}".format(epoch + 1, train_loss))
+    print(f'Overall MAE: {mae:.4f}')
+    print(f'Overall MSE: {mse:.4f}')
 
-        if args.lradj != 'TST':
-            if args.lradj == 'COS':
-                scheduler.step()
-                print("lr = {:.10f}".format(model_optim.param_groups[0]['lr']))
-            else:
-                if epoch == 0:
-                    args.learning_rate = model_optim.param_groups[0]['lr']
-                    print("lr = {:.10f}".format(model_optim.param_groups[0]['lr']))
-                adjust_learning_rate(model_optim, scheduler, epoch + 1, args, printout=True)
+    print('Scale Inverse transforming...')
+    predictions = np.clip(predictions, 0, None)
+    predictions_scaled = scaler.inverse_transform(predictions)
+    targets_scaled = scaler.inverse_transform(targets)
 
+    for i, column in enumerate(columns):
+        feature_mae = mean_absolute_error(targets_scaled[:, i], predictions_scaled[:, i])
+        print(f'{column} MAE: {feature_mae:.4f}')
+
+
+
+# setting record of experiments
+setting = '{}_{}_{}_{}_ft{}_sl{}_ll{}_pl{}_dm{}_nh{}_el{}_dl{}_df{}_fc{}_eb{}_{}'.format(
+    args.task_name,
+    args.model_id,
+    args.model,
+    args.data,
+    args.features,
+    args.seq_len,
+    args.label_len,
+    args.pred_len,
+    args.d_model,
+    args.n_heads,
+    args.e_layers,
+    args.d_layers,
+    args.d_ff,
+    args.factor,
+    args.embed,
+    args.des)
+print(f"Settings: {setting}")
+
+train_data, train_loader = data_provider(args, 'train')
+test_data, test_loader = data_provider(args, 'test')
+
+scaler = train_data.get_scaler()
+columns_in, columns_out = train_data.get_columns()
+
+print(f"Input Columns:{columns_in}")
+print(f"Output Columns:{columns_out}")
+
+
+device = torch.device("cuda")
+print(f"Device name: {torch.cuda.get_device_name(device.index)}")
+print(f"Device memory: {torch.cuda.get_device_properties(device.index).total_memory / 1024 ** 3} GB")
+
+model = TimeLLM_mimic.Model(args).float().to(device)
+model.set_columns(columns_in)
+time_now = time.time()
+
+train_steps = len(train_loader)
+
+trained_parameters = []
+for p in model.parameters():
+    if p.requires_grad is True:
+        trained_parameters.append(p)
+
+model_optim = optim.Adam(trained_parameters, lr=args.learning_rate)
+
+if args.lradj == 'COS':
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(model_optim, T_max=20, eta_min=1e-8)
+else:
+    scheduler = lr_scheduler.OneCycleLR(optimizer=model_optim,
+                                        steps_per_epoch=train_steps,
+                                        pct_start=args.pct_start,
+                                        epochs=args.train_epochs,
+                                        max_lr=args.learning_rate)
+
+criterion = nn.MSELoss()
+mae_metric = nn.L1Loss()
+
+if args.use_amp:
+    scaler = torch.cuda.amp.GradScaler()
+
+for epoch in range(args.train_epochs):
+    iter_count = 0
+    train_loss = []
+
+    model.train()
+    epoch_time = time.time()
+    for i, (batch_x, batch_y) in tqdm(enumerate(train_loader)):
+        iter_count += 1
+        model_optim.zero_grad()
+
+        batch_x = batch_x.float().to(device)
+        batch_y = batch_y.float().to(device)
+ 
+        dec_inp = torch.zeros_like(batch_y[:, :]).float().to(device)
+        dec_inp = torch.cat([batch_y[:, :], dec_inp], dim=1).float().to(device)
+
+        outputs = model(batch_x).to(device)
+        f_dim = -1 if args.features == 'MS' else 0
+        outputs = outputs[:, -args.pred_len:, f_dim:]
+        batch_y = batch_y[:, f_dim:]
+        
+        loss = criterion(outputs, batch_y)
+        train_loss.append(loss.item())
+
+        loss.backward()
+        model_optim.step()
+
+        if (i + 1) % 100 == 0:
+            print("\titers: {0}, epoch: {1} | loss: {2:.7f}".format(i + 1, epoch + 1, loss.item()))
+            speed = (time.time() - time_now) / iter_count
+            left_time = speed * ((args.train_epochs - epoch) * train_steps - i)
+            print('\tspeed: {:.4f}s/iter; left time: {:.4f}s'.format(speed, left_time))
+            iter_count = 0
+            time_now = time.time()
+
+    print("Epoch: {} cost time: {}".format(epoch + 1, time.time() - epoch_time))
+    train_loss = np.average(train_loss)
+    print("Epoch: {0} | Train Loss: {1:.7f}".format(epoch + 1, train_loss))
+
+    if args.lradj != 'TST':
+        if args.lradj == 'COS':
+            scheduler.step()
+            print("lr = {:.10f}".format(model_optim.param_groups[0]['lr']))
         else:
-            print('Updating learning rate to {}'.format(scheduler.get_last_lr()[0]))
+            if epoch == 0:
+                args.learning_rate = model_optim.param_groups[0]['lr']
+                print("lr = {:.10f}".format(model_optim.param_groups[0]['lr']))
+            adjust_learning_rate(model_optim, scheduler, epoch + 1, args, printout=True)
 
-    print('Training complete for iteration {}'.format(ii))
+    else:
+        print('Updating learning rate to {}'.format(scheduler.get_last_lr()[0]))
 
-print('All iterations completed.')
+

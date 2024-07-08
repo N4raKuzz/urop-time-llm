@@ -39,6 +39,7 @@ class Model(nn.Module):
         self.d_llm = configs.llm_dim
         self.patch_len = configs.patch_len
         self.stride = configs.stride
+        self.columns = []
 
         if configs.llm_model == 'LLAMA':
             # self.llama_config = LlamaConfig.from_pretrained('/mnt/alps/modelhub/pretrained_model/LLaMA/7B_hf/')
@@ -110,6 +111,7 @@ class Model(nn.Module):
         trends = x_enc.diff(dim=1).sum(dim=1)
 
         prompt = []
+        # if len(self.columns) == x_enc.shape[0]
         for b in range(x_enc.shape[0]):
             min_values_str = str(min_values[b].tolist()[0])
             max_values_str = str(max_values[b].tolist()[0])
@@ -168,6 +170,9 @@ class Model(nn.Module):
         mean_value = torch.mean(corr, dim=1)
         _, lags = torch.topk(mean_value, self.top_k, dim=-1)
         return lags
+
+    def set_columns(self, columns):
+        self.columns = columns
 
 
 class ReprogrammingLayer(nn.Module):

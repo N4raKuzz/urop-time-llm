@@ -39,18 +39,18 @@ class Dataset_MIMIC(Dataset):
                                           self.data_path))
 
         self.columns = df_raw.columns.to_numpy()
-        self.columns_output = df_raw.columns[list(3,49)]
-        self.columns_input = df_raw.columns[list(1,55)]
+        self.columns_output = df_raw.columns[list(range(3,51))]      
+        self.columns_input = df_raw.columns[list(range(1,56))]
         #Scale continuous observe data and combine with action data
 
         self.scaler = StandardScaler()
-        df_to_scale = df_raw[self.columns_obs]
-        df_not_to_scale = df_raw.drop(columns=self.columns_obs)
+        df_to_scale = df_raw[self.columns_output]
+        df_not_to_scale = df_raw.drop(columns=self.columns_output)
         scaled_data = self.scaler.fit_transform(df_to_scale)
 
         combined_data = np.empty(df_raw.shape, dtype=df_raw.dtypes[0])
-        combined_data[:, list(3,49)] = scaled_data
-        combined_data[:, np.setdiff1d(np.arange(df_raw.shape[1]), list(3,49))] = df_not_to_scale.values
+        combined_data[:, list(range(3,51))] = scaled_data
+        combined_data[:, np.setdiff1d(np.arange(df_raw.shape[1]), list(range(3,51)))] = df_not_to_scale.values
 
         df_combined = pd.DataFrame(combined_data, columns=self.columns)
         
