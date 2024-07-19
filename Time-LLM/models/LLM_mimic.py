@@ -5,7 +5,7 @@ import torch.nn as nn
 
 from transformers import LlamaConfig, LlamaModel, LlamaTokenizer, GPT2Config, GPT2Model, GPT2Tokenizer, BertConfig, \
     BertModel, BertTokenizer
-from layers.Embed import PatchEmbedding
+from layers.Embed import TokenEmbedding
 import transformers
 from layers.StandardNorm import Normalize
 
@@ -63,12 +63,14 @@ class Model(nn.Module):
 
         for param in self.llm_model.parameters():
             param.requires_grad = False
+        
+        for param in self.llm_model.layers[-1].parameters():
+            param.requires_grad = True
 
         self.description = 'The Medical Information Mart for Intensive Care (MIMIC) dataset is a large, de-identified and publicly-available collection of medical records.'
 
         self.dropout = nn.Dropout(configs.dropout)
-        self.patch_embedding = PatchEmbedding(
-            configs.d_model, self.patch_len, self.stride, configs.dropout)
+        self.value_embedding = TokenEmbedding(configs.n_features, self.d_ff)
 
         self.word_embeddings = self.llm_model.get_input_embeddings().weight
         self.vocab_size = self.word_embeddings.shape[0]
@@ -98,64 +100,41 @@ class Model(nn.Module):
 
     def forecast(self, x_enc, mask=None):
 
-        # print('Start Forecasting')
+        print('Start Forecasting')
         x_enc = self.normalize_layers(x_enc, 'norm')
-        # print(f'x shape: {x_enc.shape}')
+        print(f'x shape: {x_enc.shape}')
         B, T, N = x_enc.size()
         x_enc = x_enc.permute(0, 2, 1).contiguous().reshape(B * N, T, 1)
 
-        min_values = torch.min(x_enc, dim=1)[0]
-        max_values = torch.max(x_enc, dim=1)[0]
-        medians = torch.median(x_enc, dim=1).values
-        lags = self.calcute_lags(x_enc)
-        trends = x_enc.diff(dim=1).sum(dim=1)
-
+        columns = ""
+        for c in self.columns:
+            columns = columns + "," + c
         prompt = []
-        if len(self.columns) == x_enc.shape[0]:
-          for b in range(x_enc.shape[0]):
+        for b in range(x_enc.shape[0]):
             prompt_ = (
-                f"<|start_prompt|>Current Columns: {self.columns[b]}"
-                f"Dataset description; {self.description}"
-                f"Task description: forecast the next status given the previous time sequence information;"                
+                f"<|start_prompt|>Task description: Analyse the Following features of patient in icu"
+                f"Columns:{columns}"                
             )
 
-            prompt.append(prompt_)
-        
-
-        # prompt = (
-        #         f"<|start_prompt|>Dataset description: {self.description}"
-        #         "Task description: forecast the next status given the previous time sequence information;"                
-        #     )
+        prompt.append(prompt_)
 
         x_enc = x_enc.reshape(B, N, T).permute(0, 2, 1).contiguous()
         
-        # print(f'Prompt: {prompt}')
         prompt = self.tokenizer(prompt, return_tensors="pt", padding=True, truncation=True, max_length=2048).input_ids
         prompt_embeddings = self.llm_model.get_input_embeddings()(prompt.to(x_enc.device))  # (batch, prompt_token, dim)
 
-        source_embeddings = self.mapping_layer(self.word_embeddings.permute(1, 0)).permute(1, 0)
-
-        # print('Patch Reprogramming')
         x_enc = x_enc.permute(0, 2, 1).contiguous()
-        # print(f'x shape: {x_enc.shape}')
-        enc_out, n_vars = self.patch_embedding(x_enc, mask)
-        # print(f'x shape after patch embedding: {enc_out.shape}')
-        enc_out = self.reprogramming_layer(enc_out, source_embeddings, source_embeddings)
-        # print(f'x shape after reprogramming: {enc_out.shape}')
+        print(f'x shape: {x_enc.shape}')
+        enc_out = self.value_embedding(x_enc)
+        print(f'x shape after value embedding: {enc_out.shape}')
         llama_enc_out = torch.cat([prompt_embeddings, enc_out], dim=1)
-        # print(f'llama input/enc_out: {llama_enc_out.shape}')
+        print(f'llama input/enc_out: {llama_enc_out.shape}')
         dec_out = self.llm_model(inputs_embeds=llama_enc_out).last_hidden_state
-        dec_out = dec_out[:, :, :self.d_ff]
-        dec_out = torch.reshape(
-            dec_out, (-1, n_vars, dec_out.shape[-2], dec_out.shape[-1]))
-        dec_out = dec_out.permute(0, 1, 3, 2).contiguous()
+        dec_out = dec_out.view(B, T, N, -1)
+        print(f'reshape output: {dec_out.shape}')
+        dec_out = dec_out.mean(dim=-1)
+        print(f'aggregate ouput: {dec_out.shape}')
 
-        dec_out = self.output_projection(dec_out[:, :, :, -self.patch_nums:])
-        dec_out = dec_out.permute(0, 2, 1).contiguous()
-
-        dec_out = self.normalize_layers(dec_out, 'denorm')
-        # print(f'decoder ouput: {dec_out.shape}')
-        # print('Finish Forcasting')
         return dec_out
 
     def calcute_lags(self, x_enc):
