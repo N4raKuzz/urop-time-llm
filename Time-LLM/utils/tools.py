@@ -36,8 +36,7 @@ def adjust_learning_rate(accelerator, optimizer, scheduler, epoch, args, printou
 
 
 class EarlyStopping:
-    def __init__(self, accelerator=None, patience=7, verbose=False, delta=0, save_mode=True):
-        self.accelerator = accelerator
+    def __init__(self,  patience=7, verbose=False, delta=0):
         self.patience = patience
         self.verbose = verbose
         self.counter = 0
@@ -45,43 +44,20 @@ class EarlyStopping:
         self.early_stop = False
         self.val_loss_min = np.Inf
         self.delta = delta
-        self.save_mode = save_mode
 
-    def __call__(self, val_loss, model, path):
+
+    def __call__(self, val_loss):
         score = -val_loss
         if self.best_score is None:
             self.best_score = score
-            if self.save_mode:
-                self.save_checkpoint(val_loss, model, path)
         elif score < self.best_score + self.delta:
             self.counter += 1
-            if self.accelerator is None:
-                print(f'EarlyStopping counter: {self.counter} out of {self.patience}')
-            else:
-                self.accelerator.print(f'EarlyStopping counter: {self.counter} out of {self.patience}')
+            print(f'EarlyStopping counter: {self.counter} out of {self.patience}')
             if self.counter >= self.patience:
                 self.early_stop = True
         else:
             self.best_score = score
-            if self.save_mode:
-                self.save_checkpoint(val_loss, model, path)
             self.counter = 0
-
-    def save_checkpoint(self, val_loss, model, path):
-        if self.verbose:
-            if self.accelerator is not None:
-                self.accelerator.print(
-                    f'Validation loss decreased ({self.val_loss_min:.6f} --> {val_loss:.6f}).  Saving model ...')
-            else:
-                print(
-                    f'Validation loss decreased ({self.val_loss_min:.6f} --> {val_loss:.6f}).  Saving model ...')
-
-        if self.accelerator is not None:
-            model = self.accelerator.unwrap_model(model)
-            torch.save(model.state_dict(), path + '/' + 'checkpoint')
-        else:
-            torch.save(model.state_dict(), path + '/' + 'checkpoint')
-        self.val_loss_min = val_loss
 
 
 class dotdict(dict):

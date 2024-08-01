@@ -12,20 +12,30 @@ from layers.StandardNorm import Normalize
 transformers.logging.set_verbosity_error()
 
 
-class FlattenHead(nn.Module):
-    def __init__(self, n_vars, nf, target_window, head_dropout=0):
+class MLP(nn.Module):
+    def __init__(self, d_model, seq_len, mlp_hidden_dim, output_dim):
         super().__init__()
-        self.n_vars = n_vars
-        self.flatten = nn.Flatten(start_dim=-2)
-        self.linear = nn.Linear(nf, target_window)
-        self.dropout = nn.Dropout(head_dropout)
 
-    def forward(self, x):
-        x = self.flatten(x)
-        x = self.linear(x)
-        x = self.dropout(x)
-        return x
+        self.n_features = output_dim
+        self.seq_len = seq_len
+        self.linear = nn.Linear(d_model, 1)
+        self.mlp = nn.Sequential(
+            nn.Linear(seq_len * output_dim, mlp_hidden_dim),
+            nn.ReLU(),
+            nn.Linear(mlp_hidden_dim, output_dim)
+        )
+    
+    def forward(self, dec_out):
 
+        # x = self.linear(dec_out)
+        # print(f"shape after linear: {x.shape}")
+        # x = x.squeeze(-1) 
+        # x = x.view(1, self.seq_len, self.n_features)
+        x = dec_out.reshape(1, self.seq_len * self.n_features)
+        output = self.mlp(x)  
+        # print(f"shape after mlp: {output.shape}")
+        
+        return output
 
 class Model(nn.Module):
 
@@ -39,6 +49,7 @@ class Model(nn.Module):
         self.d_llm = configs.llm_dim
         self.patch_len = configs.patch_len
         self.stride = configs.stride
+        self.n_features = configs.n_features
         self.columns = []
 
         if configs.llm_model == 'LLAMA':
@@ -63,30 +74,21 @@ class Model(nn.Module):
 
         for param in self.llm_model.parameters():
             param.requires_grad = False
-        
-        for param in self.llm_model.layers[-1].parameters():
-            param.requires_grad = True
 
         self.description = 'The Medical Information Mart for Intensive Care (MIMIC) dataset is a large, de-identified and publicly-available collection of medical records.'
 
         self.dropout = nn.Dropout(configs.dropout)
-        self.value_embedding = TokenEmbedding(configs.n_features, self.d_ff)
+        self.value_embedding = TokenEmbedding(1, self.d_llm)
 
         self.word_embeddings = self.llm_model.get_input_embeddings().weight
         self.vocab_size = self.word_embeddings.shape[0]
         self.num_tokens = 1000
         self.mapping_layer = nn.Linear(self.vocab_size, self.num_tokens)
 
-        self.reprogramming_layer = ReprogrammingLayer(configs.d_model, configs.n_heads, self.d_ff, self.d_llm)
-
         self.patch_nums = int((configs.seq_len - self.patch_len) / self.stride + 2)
         self.head_nf = self.d_ff * self.patch_nums
 
-        if self.task_name == 'long_term_forecast' or self.task_name == 'short_term_forecast':
-            self.output_projection = FlattenHead(configs.enc_in, self.head_nf, self.pred_len,
-                                                 head_dropout=configs.dropout)
-        else:
-            raise NotImplementedError
+        self.mlp = MLP(self.d_llm, configs.seq_len, 256, self.n_features)
 
         self.normalize_layers = Normalize(configs.enc_in, affine=False)
 
@@ -95,47 +97,43 @@ class Model(nn.Module):
             if mask!=None:
                 dec_out = self.forecast(x_enc, mask)
             dec_out = self.forecast(x_enc)
-            return dec_out[:, -self.pred_len:, :]
+            return dec_out
         return None
 
     def forecast(self, x_enc, mask=None):
 
-        print('Start Forecasting')
+        # print('Start Forecasting')
         x_enc = self.normalize_layers(x_enc, 'norm')
-        print(f'x shape: {x_enc.shape}')
-        B, T, N = x_enc.size()
-        x_enc = x_enc.permute(0, 2, 1).contiguous().reshape(B * N, T, 1)
+        # # print(f'x shape: {x_enc.shape}')
+        # B, T, N = x_enc.size()
 
-        columns = ""
-        for c in self.columns:
-            columns = columns + "," + c
-        prompt = []
-        for b in range(x_enc.shape[0]):
-            prompt_ = (
-                f"<|start_prompt|>Task description: Analyse the Following features of patient in icu"
-                f"Columns:{columns}"                
-            )
+        # columns = ""
+        # for c in self.columns:
+        #     columns = columns + "," + c
+        # prompt = []
+        # for b in range(B * T):
+        #   prompt_ = (
+        #       f"<|start_prompt|>Task description: Analyse the Following features of patient in ICU"
+        #       f"Columns:{columns}"                
+        #   )
+        #   prompt.append(prompt_)
 
-        prompt.append(prompt_)
+        # prompt = self.tokenizer(prompt, return_tensors="pt", padding=True, truncation=True, max_length=2048).input_ids
+        # prompt_embeddings = self.llm_model.get_input_embeddings()(prompt.to(x_enc.device)) 
 
-        x_enc = x_enc.reshape(B, N, T).permute(0, 2, 1).contiguous()
-        
-        prompt = self.tokenizer(prompt, return_tensors="pt", padding=True, truncation=True, max_length=2048).input_ids
-        prompt_embeddings = self.llm_model.get_input_embeddings()(prompt.to(x_enc.device))  # (batch, prompt_token, dim)
+        # x_enc = x_enc.view(T * B, N, 1)
+        # # print(f'x reshape: {x_enc.shape}')
+        # enc_out = self.value_embedding(x_enc)
+        # # print(f'x shape after value embedding: {enc_out.shape}')
+        # llama_enc_out = torch.cat([prompt_embeddings, enc_out], dim=1)
+        # # print(f'llama input/enc_out: {llama_enc_out.shape}')
+        # dec_out = self.llm_model(inputs_embeds=llama_enc_out).last_hidden_state        
+        # dec_out = dec_out[:, -self.n_features:, :]
+        # # print(f'dec out: {dec_out.shape}') 
+        pred = self.mlp(x_enc)   
+        # print(f'pred: {pred.shape}')
 
-        x_enc = x_enc.permute(0, 2, 1).contiguous()
-        print(f'x shape: {x_enc.shape}')
-        enc_out = self.value_embedding(x_enc)
-        print(f'x shape after value embedding: {enc_out.shape}')
-        llama_enc_out = torch.cat([prompt_embeddings, enc_out], dim=1)
-        print(f'llama input/enc_out: {llama_enc_out.shape}')
-        dec_out = self.llm_model(inputs_embeds=llama_enc_out).last_hidden_state
-        dec_out = dec_out.view(B, T, N, -1)
-        print(f'reshape output: {dec_out.shape}')
-        dec_out = dec_out.mean(dim=-1)
-        print(f'aggregate ouput: {dec_out.shape}')
-
-        return dec_out
+        return pred
 
     def calcute_lags(self, x_enc):
         q_fft = torch.fft.rfft(x_enc.permute(0, 2, 1).contiguous(), dim=-1)
@@ -150,42 +148,3 @@ class Model(nn.Module):
         self.columns = columns
 
 
-class ReprogrammingLayer(nn.Module):
-    def __init__(self, d_model, n_heads, d_keys=None, d_llm=None, attention_dropout=0.1):
-        super(ReprogrammingLayer, self).__init__()
-
-        d_keys = d_keys or (d_model // n_heads)
-
-        self.query_projection = nn.Linear(d_model, d_keys * n_heads)
-        self.key_projection = nn.Linear(d_llm, d_keys * n_heads)
-        self.value_projection = nn.Linear(d_llm, d_keys * n_heads)
-        self.out_projection = nn.Linear(d_keys * n_heads, d_llm)
-        self.n_heads = n_heads
-        self.dropout = nn.Dropout(attention_dropout)
-
-    def forward(self, target_embedding, source_embedding, value_embedding):
-        B, L, _ = target_embedding.shape
-        S, _ = source_embedding.shape
-        H = self.n_heads
-
-        target_embedding = self.query_projection(target_embedding).view(B, L, H, -1)
-        source_embedding = self.key_projection(source_embedding).view(S, H, -1)
-        value_embedding = self.value_projection(value_embedding).view(S, H, -1)
-
-        out = self.reprogramming(target_embedding, source_embedding, value_embedding)
-
-        out = out.reshape(B, L, -1)
-
-        return self.out_projection(out)
-
-    def reprogramming(self, target_embedding, source_embedding, value_embedding):
-        B, L, H, E = target_embedding.shape
-
-        scale = 1. / sqrt(E)
-
-        scores = torch.einsum("blhe,she->bhls", target_embedding, source_embedding)
-
-        A = self.dropout(torch.softmax(scale * scores, dim=-1))
-        reprogramming_embedding = torch.einsum("bhls,she->blhe", A, value_embedding)
-
-        return reprogramming_embedding

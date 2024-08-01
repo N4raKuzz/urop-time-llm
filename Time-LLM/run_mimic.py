@@ -16,7 +16,7 @@ import os
 os.environ['CURL_CA_BUNDLE'] = ''
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "max_split_size_mb:64"
 
-from utils.tools import del_files, EarlyStopping, adjust_learning_rate, vali, load_content
+from utils.tools import EarlyStopping, adjust_learning_rate, load_content
 
 parser = argparse.ArgumentParser(description='Time-LLM')
 
@@ -100,25 +100,24 @@ parser.add_argument('--percent', type=int, default=100)
 
 args = parser.parse_args()
 
-def evaluate(model, test_loader, criterion, columns, scaler, device):
+def evaluate(model, lstm, test_loader, columns, scaler, device):
     model.eval()
-    total_loss = 0
+    # lstm.eval()
     predictions = []
     targets = []
     print('Evaluation on Test set...')
     with torch.no_grad():
 
-        for batch_x, batch_y in test_loader:
-            batch_x = batch_x.float().to(device)
-            batch_y = batch_y.float().to(device)
-            
-            outputs = model(batch_x).to(device)
-            outputs = outputs[:, -args.pred_len:, list(range(3,51))]
-            loss = criterion(outputs, batch_y)
-            
-            total_loss += loss.item() * batch_x.size(0)
-            predictions.extend(outputs.cpu().numpy())
-            targets.extend(batch_y.cpu().numpy())
+      for batch_x, batch_y in test_loader:
+          batch_x = batch_x.float().to(device)
+          batch_y = batch_y.float().to(device)
+
+          llama_outputs = model(batch_x).to(device)
+          # lstm_outputs = lstm(llama_outputs).to(device)
+          outputs = llama_outputs[:,list(range(3,51))]
+
+          predictions.extend(outputs.cpu().numpy())
+          targets.extend(batch_y.cpu().numpy())
 
     predictions = np.array(predictions).reshape(-1, 48)
     targets = np.array(targets).reshape(-1, 48)
@@ -134,13 +133,36 @@ def evaluate(model, test_loader, criterion, columns, scaler, device):
     predictions_scaled = scaler.inverse_transform(predictions)
     targets_scaled = scaler.inverse_transform(targets)
 
-    for i, column in enumerate(columns):
-        feature_mae = mean_absolute_error(targets_scaled[:, i], predictions_scaled[:, i])
-        print(f'{column} MAE: {feature_mae:.4f}')
+    # for i, column in enumerate(columns):
+    #     feature_mae = mean_absolute_error(targets_scaled[:, i], predictions_scaled[:, i])
+    #     print(f'{column} MAE: {feature_mae:.4f}')
 
+def vali(model, lstm, vali_loader, early_stopping, device):
+    model.eval()
+    predictions = []
+    targets = []
+    print('Validating...')
+    with torch.no_grad():
+        for batch_x, batch_y in vali_loader:
+            batch_x = batch_x.float().to(device)
+            batch_y = batch_y.float().to(device)
 
+            llama_outputs = model(batch_x).to(device)
+            # lstm_outputs = lstm(llama_outputs).to(device)
+            outputs = llama_outputs[:,list(range(3,51))]
 
-# setting record of experiments
+            predictions.extend(outputs.cpu().numpy())
+            targets.extend(batch_y.cpu().numpy())
+
+    predictions = np.array(predictions).reshape(-1, 48)
+    targets = np.array(targets).reshape(-1, 48)
+
+    vali_loss = mean_squared_error(targets, predictions)
+    early_stopping(vali_loss)
+
+    return early_stopping.early_stop
+
+# Setting record of experiments
 setting = '{}_{}_{}_{}_ft{}_sl{}_ll{}_pl{}_dm{}_nh{}_el{}_dl{}_df{}_fc{}_eb{}_{}'.format(
     args.task_name,
     args.model_id,
@@ -160,26 +182,28 @@ setting = '{}_{}_{}_{}_ft{}_sl{}_ll{}_pl{}_dm{}_nh{}_el{}_dl{}_df{}_fc{}_eb{}_{}
     args.des)
 print(f"Settings: {setting}")
 
+# Load Data 
 train_data, train_loader = data_provider(args, 'train')
 test_data, test_loader = data_provider(args, 'test')
-
+vali_data, vali_loader = data_provider(args, 'vali')
 scaler = train_data.get_scaler()
 columns_in, columns_out = train_data.get_columns()
-
 print(f"Input Columns:{columns_in}")
 print(f"Output Columns:{columns_out}")
 
+# Initialize Device
 device = torch.device("cuda")
 print(f"Device name: {torch.cuda.get_device_name(device.index)}")
 print(f"Device memory: {torch.cuda.get_device_properties(device.index).total_memory / 1024 ** 3} GB")
 
+# Initialize Model
 model = LLM_mimic.Model(args).float().to(device)
-lstm = LSTM.Model(args.n_features,args.n_features,args.seq_len,args.label_len).to(device)
+lstm = LSTM.Model(args.n_features,args.n_features,args.seq_len,args.n_features).to(device)
 model.set_columns(columns_in)
 time_now = time.time()
 
-train_steps = len(train_loader)
 
+train_steps = len(train_loader)
 trained_parameters = []
 for p in model.parameters():
     if p.requires_grad is True:
@@ -187,6 +211,7 @@ for p in model.parameters():
 
 model_optim = optim.Adam(trained_parameters, lr=args.learning_rate)
 
+early_stopping = EarlyStopping(patience=args.patience)
 if args.lradj == 'COS':
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(model_optim, T_max=20, eta_min=1e-8)
 else:
@@ -207,6 +232,7 @@ for epoch in range(args.train_epochs):
     train_loss = []
 
     model.train()
+    # lstm.train()
     epoch_time = time.time()
     for i, (batch_x, batch_y) in tqdm(enumerate(train_loader)):
         iter_count += 1
@@ -219,12 +245,14 @@ for epoch in range(args.train_epochs):
         dec_inp = torch.cat([batch_y[:, :], dec_inp], dim=1).float().to(device)
 
         llama_outputs = model(batch_x).to(device)
-        print(f"llama_output: {llama_outputs.shape}")
-        lstm_outputs = lstm(llama_outputs).to(device)
-        lstm_outputs = lstm_outputs[:, -args.pred_len:, list(range(3,51))]
+        # print(f"llama_output: {llama_outputs.shape}")
+        # lstm_outputs = lstm(llama_outputs).to(device)
+        # print(f"lstm_output: {lstm_outputs.shape}")
+
+        outputs = llama_outputs[:,list(range(3,51))]
         batch_y = batch_y[:, -1:]
         
-        loss = criterion(lstm_outputs, batch_y)
+        loss = criterion(outputs, batch_y)
         train_loss.append(loss.item())
 
         loss.backward()
@@ -254,7 +282,10 @@ for epoch in range(args.train_epochs):
 
     # else:
     #     print('Updating learning rate to {}'.format(scheduler.get_last_lr()[0]))
-  
-evaluate(model, test_loader, criterion, columns_out, scaler, device)
+    
+    evaluate(model, lstm, test_loader, columns_out, scaler, device)
+    if vali(model, lstm, vali_loader, early_stopping, device):
+        print("Early stopping")
+        break
 
 

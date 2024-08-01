@@ -1,0 +1,98 @@
+experiment_name: ef_prediction
+seed: 12  # Add seed for reproducibility
+
+data:
+  preprocessed_dir: ./data/preprocessed/ventilation_seed12
+  numerical_columns:
+    - age
+    - weight
+    - PIM
+    - MAP
+    - RR(measured)
+    - etCO2
+    - temp
+    - HR
+    - SpO2
+    - systolicBP
+    - meanBP
+    - diastolicBP
+    - pH
+    - PCO2
+    - baseExcess
+    - lactate
+    - HCO3
+    - WBC
+    - Neutrophil
+    - Hb
+    - fluidBalance
+    - FiO2
+    - PIP
+    - RR(set)
+    - PEEP(set)
+    - inspTime
+    - PS
+    - TVbyWeight
+    - hoursVentilated
+    # - SFRatio
+    # - RRRatio
+    # - IERatio
+    # - deltaP
+    # - mPower
+  binary_columns:
+    - gender
+    - NMB
+    - sedation
+    - furosemide
+    - vasoActive
+    - steroid
+    - ventMode_PC
+    - ventMode_PS
+    - diagnosis_cardiovascular
+    - diagnosis_gastrointestinal
+    - diagnosis_infection
+    - diagnosis_neurological
+    - diagnosis_others
+    - diagnosis_respiratory
+  target_column: successful_extubation_next_24h
+  aggregation:
+    methods:
+      numerical_columns: mean
+      binary_columns: max
+      target_column: last
+  window_size: 1
+  resampling:
+    method: undersampling  # or undersampling
+    ratio: 0.5
+  feature_selection:
+    estimator: 
+      class: LogisticRegression
+      params:
+        max_iter: 5000
+    step: 1
+    cv: 5
+
+dataset:
+  module: scripts.experiments.ef_prediction.main
+  class: EFPredictionDataset
+
+model:
+  name: classic_ml
+
+metrics:
+  module: src.metrics.classification_metrics
+  class: ClassificationMetrics
+
+optimizer:
+  class: Adam
+  params:
+    lr: 0.00001
+    weight_decay: 0.000001
+
+training:
+  class_weight: balanced
+
+logging:
+  base_dir: ./results
+
+
+

@@ -1,0 +1,116 @@
+task: dynamic_prediction
+results_dir: ./logs/final_results
+log_dir: ./logs
+checkpoint_dir: ./logs/intermediate_checkpoints
+
+'dataset': {
+    'module': 'scripts.dataset.ventilation_dataset',
+    'class': 'VentilationDataset',
+    # other dataset parameters...
+}
+
+
+data_config:
+  data_path: data/df_imputed_with_cluster.pkl # provide a pkl path
+  reader_params:
+    obs_window: 4
+    filter_params:
+      min_hours_before_extubation: 6
+      min_LOV: 12
+      max_LOV: 672  # 28 days
+      exclude_deceased: true
+      exclude_extubation_failure: true
+  columns:
+    id_col: encounterId
+    index_col: timestamp
+    numerical:
+      - age
+      - weight
+      - PIM
+      - hoursVentilated
+      - HR
+      - MAP
+      - RR(measured)
+      - etCO2
+      - temp
+      - HR
+      - SpO2
+      - systolicBP
+      - meanBP
+      - diastolicBP
+      - pH
+      - PCO2
+      - baseExcess
+      - lactate
+      - HCO3
+      - WBC
+      - Neutrophil
+      - Hb
+      - fluidBalance
+      - FiO2
+      - PIP
+      - RR(set)
+      - PEEP(set)
+      - inspTime
+      - PS
+      - TVbyWeight
+      # - RRRatio
+      # - IERatio
+      # - deltaP
+      # - mPower
+      # - SFRatio
+    categorical:
+      - diagnosis
+      - cluster_label1
+      # - ethnicity
+    binary:
+      - gender
+      - NMB
+      - sedation
+      - furosemide
+      - vasoActive
+      - steroid
+      - ventMode_PC
+      - ventMode_PS
+    target:
+      - successful_extubation_next_12h
+      # - first_extubated_failed
+  aggregation:
+    resample_rate: 1
+    methods:
+      numerical: mean
+      categorical: last
+      binary: max
+      target: last
+  standardization: {}
+  sequence:
+    context_length: 1
+    pad_value: 0
+
+model_config:
+  type: mlp
+  input_dim: 44
+  hidden_dims:
+    - 64  # lstm will only take the first hidden_dim and apply to all hidden layers
+    - 128
+    - 64
+  output_dim: 1
+  num_layers: 2
+  dropout: 0.6
+  activation: leakyrelu
+  bidirectional: false
+
+train_config:
+  batch_size: 256
+  max_epochs: 100
+  early_stopping_patience: 5
+  loss_fn: BCEWithLogitsLoss
+  weighted_loss: true
+  optimizer:
+    class: Adam
+    params:
+      lr: 0.00004
+      weight_decay: 0.00001
+  grad_clip_val: 1.0
+  log_every_n_steps: 50
+
