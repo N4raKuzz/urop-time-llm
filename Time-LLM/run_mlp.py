@@ -1,34 +1,24 @@
-import argparse
 import torch
-from torch import nn, optim
-from torch.optim import lr_scheduler
+import torch.nn as nn
+import torch.optim as optim
 from tqdm import tqdm
-
-from models import LLM_mimic, LSTM
-from data_provider.data_factory import data_provider
 from sklearn.metrics import roc_auc_score, average_precision_score, confusion_matrix
 import matplotlib.pyplot as plt
 import seaborn as sns
 
+from models import MLP
+from data_provider.data_factory import data_provider
+from utils.tools import EarlyStopping
+
+import argparse
 import time
 import random
 import numpy as np
 import os
 
-os.environ['CURL_CA_BUNDLE'] = ''
-os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "max_split_size_mb:64"
-
-from utils.tools import EarlyStopping, adjust_learning_rate, load_content
-
 parser = argparse.ArgumentParser(description='Time-LLM')
-
-fix_seed = 2021
-random.seed(fix_seed)
-torch.manual_seed(fix_seed)
-np.random.seed(fix_seed)
-
 # basic config
-parser.add_argument('--task_name', type=str, default='short_term_forecast',
+parser.add_argument('--task_name', type=str, default='classification',
                     help='task name, options:[long_term_forecast, short_term_forecast, imputation, classification, anomaly_detection]')
 parser.add_argument('--is_training', type=int, default=1, help='status')
 parser.add_argument('--model_id', type=str, default='test', help='model id')
@@ -52,57 +42,27 @@ parser.add_argument('--freq', type=str, default='h',
                          'options:[s:secondly, t:minutely, h:hourly, d:daily, b:business days, w:weekly, m:monthly], '
                          'you can also use more detailed freq like 15min or 3h')
 parser.add_argument('--checkpoints', type=str, default='./checkpoints/', help='location of model checkpoints')
-
-# forecasting task
 parser.add_argument('--seq_len', type=int, default=8, help='input sequence length')
-parser.add_argument('--label_len', type=int, default=48, help='start token length')
 parser.add_argument('--pred_len', type=int, default=1, help='prediction sequence length')
-parser.add_argument('--seasonal_patterns', type=str, default='Monthly', help='subset for M4')
-parser.add_argument('--input_size', type=int, default=54, help='input size of mlp')
-parser.add_argument('--hidden_size', type=int, default=2, help='hidden size of mlp')
 
 # model define
-parser.add_argument('--enc_in', type=int, default=7, help='encoder input size')
-parser.add_argument('--dec_in', type=int, default=7, help='decoder input size')
-parser.add_argument('--c_out', type=int, default=7, help='output size')
 parser.add_argument('--n_features', type=int, default=55, help='num of input features')
-parser.add_argument('--d_model', type=int, default=16, help='dimension of model')
-parser.add_argument('--n_heads', type=int, default=8, help='num of heads')
-parser.add_argument('--e_layers', type=int, default=2, help='num of encoder layers')
-parser.add_argument('--d_layers', type=int, default=1, help='num of decoder layers')
-parser.add_argument('--d_ff', type=int, default=32, help='dimension of fcn')
-parser.add_argument('--moving_avg', type=int, default=25, help='window size of moving average')
-parser.add_argument('--factor', type=int, default=1, help='attn factor')
-parser.add_argument('--dropout', type=float, default=0.1, help='dropout')
-parser.add_argument('--embed', type=str, default='timeF',
-                    help='time features encoding, options:[timeF, fixed, learned]')
-parser.add_argument('--activation', type=str, default='gelu', help='activation')
-parser.add_argument('--output_attention', action='store_true', help='whether to output attention in encoder')
-parser.add_argument('--patch_len', type=int, default=8, help='patch length')
-parser.add_argument('--stride', type=int, default=4, help='stride')
-parser.add_argument('--prompt_domain', type=int, default=0, help='')
-parser.add_argument('--llm_model', type=str, default='LLAMA', help='LLM model') # LLAMA, GPT2, BERT
-parser.add_argument('--llm_dim', type=int, default='4096', help='LLM model dimension')# LLama7b:4096; GPT2-small:768; BERT-base:768
-
+parser.add_argument('--input_size', type=int, default=54, help='input size of mlp')
+parser.add_argument('--hidden_size', type=int, default=2, help='hidden size of mlp')
 
 # optimization
 parser.add_argument('--num_workers', type=int, default=10, help='data loader num workers')
 parser.add_argument('--itr', type=int, default=1, help='experiments times')
-parser.add_argument('--train_epochs', type=int, default=10, help='train epochs')
+parser.add_argument('--train_epochs', type=int, default=100, help='train epochs')
 parser.add_argument('--align_epochs', type=int, default=10, help='alignment epochs')
-parser.add_argument('--batch_size', type=int, default=8, help='batch size of train input data')
+parser.add_argument('--batch_size', type=int, default=32, help='batch size of train input data')
 parser.add_argument('--eval_batch_size', type=int, default=8, help='batch size of model evaluation')
 parser.add_argument('--patience', type=int, default=10, help='early stopping patience')
 parser.add_argument('--learning_rate', type=float, default=0.0001, help='optimizer learning rate')
-parser.add_argument('--des', type=str, default='test', help='exp description')
-parser.add_argument('--loss', type=str, default='MSE', help='loss function')
-parser.add_argument('--lradj', type=str, default='type1', help='adjust learning rate')
-parser.add_argument('--pct_start', type=float, default=0.2, help='pct_start')
-parser.add_argument('--use_amp', action='store_true', help='use automatic mixed precision training', default=False)
-parser.add_argument('--llm_layers', type=int, default=1)
-parser.add_argument('--percent', type=int, default=100)
+parser.add_argument('--loss', type=str, default='BCE', help='loss function')
 
 args = parser.parse_args()
+
 
 def evaluate(model, test_loader, device):
     model.eval()
@@ -113,7 +73,7 @@ def evaluate(model, test_loader, device):
     print('Evaluation on Test set...')
     with torch.no_grad():
         for i, (batch_x, batch_y) in tqdm(enumerate(test_loader)):
-            model_optim.zero_grad()
+            optimizer.zero_grad()
 
             batch_x = batch_x.float().to(device)
             batch_y = batch_y.float().to(device)
@@ -135,7 +95,7 @@ def evaluate(model, test_loader, device):
 
     predictions = np.round(predictions).tolist()
     cm = confusion_matrix(targets, predictions)
-    plot_confusion_matrix(cm=cm, labels=['Decline','Incline'], save_path='plots/Llama1_loss_curve.png')
+    plot_confusion_matrix(cm=cm, labels=['Decline','Incline'], save_path='plots/Mlp2_cm.png')
 
     print("Test Loss: {0:.7f}".format(loss))
     print(f'AUROC: {auroc:.4f}')
@@ -164,7 +124,7 @@ def vali(model, vali_loader, early_stopping, device):
     print('Validation on Vali set...')
     with torch.no_grad():
         for i, (batch_x, batch_y) in tqdm(enumerate(vali_loader)):
-            model_optim.zero_grad()
+            optimizer.zero_grad()
 
             batch_x = batch_x.float().to(device)
             batch_y = batch_y.float().to(device)
@@ -177,6 +137,7 @@ def vali(model, vali_loader, early_stopping, device):
 
             predictions.extend(outputs.cpu().numpy())
             targets.extend(batch_y.cpu().numpy())
+
 
     vali_loss = np.average(vali_loss)
     early_stopping(vali_loss)
@@ -202,26 +163,6 @@ def plot_loss_curves(train_loss, val_loss, save_path):
     plt.savefig(save_path)
     print(f"Plot saved to {os.path.abspath(save_path)}")
 
-# Setting record of experiments
-setting = '{}_{}_{}_{}_ft{}_sl{}_ll{}_pl{}_dm{}_nh{}_el{}_dl{}_df{}_fc{}_eb{}_{}'.format(
-    args.task_name,
-    args.model_id,
-    args.model,
-    args.data,
-    args.features,
-    args.seq_len,
-    args.label_len,
-    args.pred_len,
-    args.d_model,
-    args.n_heads,
-    args.e_layers,
-    args.d_layers,
-    args.d_ff,
-    args.factor,
-    args.embed,
-    args.des)
-print(f"Settings: {setting}")
-
 # Load Data 
 train_data, train_loader = data_provider(args, 'train')
 test_data, test_loader = data_provider(args, 'test')
@@ -236,36 +177,14 @@ device = torch.device("cuda")
 print(f"Device name: {torch.cuda.get_device_name(device.index)}")
 print(f"Device memory: {torch.cuda.get_device_properties(device.index).total_memory / 1024 ** 3} GB")
 
-# Initialize Model
-model = LLM_mimic.Model(args).float().to(device)
-# lstm = LSTM.Model(args.n_features,args.n_features,args.seq_len,args.n_features).to(device)
-model.set_columns(columns_in)
+early_stopping = EarlyStopping(patience=args.patience)
+train_steps = len(train_loader)
 time_now = time.time()
 
-
-train_steps = len(train_loader)
-trained_parameters = []
-for p in model.parameters():
-    if p.requires_grad is True:
-        trained_parameters.append(p)
-
-model_optim = optim.Adam(trained_parameters, lr=args.learning_rate)
-
-early_stopping = EarlyStopping(patience=args.patience)
-if args.lradj == 'COS':
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(model_optim, T_max=20, eta_min=1e-8)
-else:
-    scheduler = lr_scheduler.OneCycleLR(optimizer=model_optim,
-                                        steps_per_epoch=train_steps,
-                                        pct_start=args.pct_start,
-                                        epochs=args.train_epochs,
-                                        max_lr=args.learning_rate)
-
-criterion = nn.MSELoss()
-mae_metric = nn.L1Loss()
-
-if args.use_amp:
-    scaler = torch.cuda.amp.GradScaler()
+model = MLP.Model(args.input_size, args.hidden_size).to(device)
+weight = torch.tensor([0.2, 0.8])
+criterion = nn.BCELossWithLogitsLoss(weight=weight)
+optimizer = optim.Adam(model.parameters(), lr=args.learning_rate)
 
 train_loss = []
 vali_loss = []
@@ -274,31 +193,23 @@ for epoch in range(args.train_epochs):
     epoch_loss = []
 
     model.train()
-    # lstm.train()
     epoch_time = time.time()
     for i, (batch_x, batch_y) in tqdm(enumerate(train_loader)):
         iter_count += 1
-        model_optim.zero_grad()
+        optimizer.zero_grad()
 
         batch_x = batch_x.float().to(device)
         batch_y = batch_y.float().to(device)
+        # print(f"targets: {batch_y.type()}")
  
-        # dec_inp = torch.zeros_like(batch_y[:, :]).float().to(device)
-        # dec_inp = torch.cat([batch_y[:, :], dec_inp], dim=1).float().to(device)
-
-        llama_outputs = model(batch_x).to(device)
-        # print(f"llama_output: {llama_outputs.shape}")
-        # lstm_outputs = lstm(llama_outputs).to(device)
-        # print(f"lstm_output: {lstm_outputs.shape}")
-
-        outputs = llama_outputs[:,list(range(3,51))]
-        batch_y = batch_y[:, -1:]
-        
+        outputs = model(batch_x)
         loss = criterion(outputs, batch_y)
         epoch_loss.append(loss.item())
-
+        
+        # Backward pass and optimization
+        optimizer.zero_grad()
         loss.backward()
-        model_optim.step()
+        optimizer.step()
 
         if (i + 1) % 100 == 0:
             print("\titers: {0}, epoch: {1} | loss: {2:.7f}".format(i + 1, epoch + 1, loss.item()))
@@ -321,4 +232,4 @@ for epoch in range(args.train_epochs):
 
 
 evaluate(model, test_loader, device)
-plot_loss_curves(train_loss, vali_loss, 'plots/Llama1_loss_curve.png')
+plot_loss_curves(train_loss, vali_loss, 'plots/Mlp2_loss_curve.png')

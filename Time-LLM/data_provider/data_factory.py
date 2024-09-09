@@ -1,5 +1,5 @@
 from data_provider.data_loader import Dataset_ETT_hour, Dataset_ETT_minute
-from data_provider.mimic_loader import Dataset_MIMIC
+from data_provider.mimic_loader import Dataset_MIMIC, Dataset_MOR
 from torch.utils.data import DataLoader
 
 data_dict = {
@@ -8,13 +8,12 @@ data_dict = {
     'ETTm1': Dataset_ETT_minute,
     'ETTm2': Dataset_ETT_minute,
     'MIMIC': Dataset_MIMIC,
+    'MOR': Dataset_MOR,
 }
 
 
 def data_provider(args, flag):
     Data = data_dict[args.data]
-    timeenc = 0 if args.embed != 'timeF' else 1
-    percent = args.percent
 
     if flag == 'test':
         shuffle_flag = False
@@ -26,37 +25,20 @@ def data_provider(args, flag):
         drop_last = True
         batch_size = args.batch_size
         freq = args.freq
+        
+    drop_last = False
+    data_set = Data(
+        root_path=args.root_path,
+        data_path=args.data_path,
+        flag=flag,
+        max_len=args.seq_len,
+    )
 
-    if args.data == 'MIMIC':
-        drop_last = False
-        data_set = Data(
-            root_path=args.root_path,
-            data_path=args.data_path,
-            flag=flag,
-            max_len=args.seq_len,
-            features=args.features,
-            target=args.target,
-            timeenc=timeenc,
-            freq=freq,
-            seasonal_patterns=args.seasonal_patterns
-        )
-    else:
-        data_set = Data(
-            root_path=args.root_path,
-            data_path=args.data_path,
-            flag=flag,
-            size=[args.seq_len, args.label_len, args.pred_len],
-            features=args.features,
-            target=args.target,
-            timeenc=timeenc,
-            freq=freq,
-            percent=percent,
-            seasonal_patterns=args.seasonal_patterns
-        )
     data_loader = DataLoader(
         data_set,
         batch_size=batch_size,
         shuffle=shuffle_flag,
         num_workers=args.num_workers,
         drop_last=drop_last)
+
     return data_set, data_loader

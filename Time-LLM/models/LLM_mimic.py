@@ -13,28 +13,27 @@ transformers.logging.set_verbosity_error()
 
 
 class MLP(nn.Module):
-    def __init__(self, d_model, seq_len, mlp_hidden_dim, output_dim):
+    def __init__(self, d_model, input_dim, mlp_hidden_dim):
         super().__init__()
 
-        self.n_features = output_dim
-        self.seq_len = seq_len
         self.linear = nn.Linear(d_model, 1)
         self.mlp = nn.Sequential(
-            nn.Linear(seq_len * output_dim, mlp_hidden_dim),
+            nn.Linear(input_dim, mlp_hidden_dim),
             nn.ReLU(),
-            nn.Linear(mlp_hidden_dim, output_dim)
+            nn.Linear(mlp_hidden_dim, 1),
+            nn.Sigmoid()
         )
     
     def forward(self, dec_out):
 
-        # x = self.linear(dec_out)
+        x = self.linear(dec_out)
         # print(f"shape after linear: {x.shape}")
-        # x = x.squeeze(-1) 
+        x = x.squeeze(-1) 
         # x = x.view(1, self.seq_len, self.n_features)
-        x = dec_out.reshape(1, self.seq_len * self.n_features)
+        # x = dec_out.reshape(1, self.seq_len * self.n_features)
         output = self.mlp(x)  
         # print(f"shape after mlp: {output.shape}")
-        
+        output = output.squeeze()
         return output
 
 class Model(nn.Module):
@@ -88,52 +87,50 @@ class Model(nn.Module):
         self.patch_nums = int((configs.seq_len - self.patch_len) / self.stride + 2)
         self.head_nf = self.d_ff * self.patch_nums
 
-        self.mlp = MLP(self.d_llm, configs.seq_len, 256, self.n_features)
+        self.mlp = MLP(self.d_llm, configs.input_size, configs.hidden_size)
 
         self.normalize_layers = Normalize(configs.enc_in, affine=False)
 
     def forward(self, x_enc, mask=None):
-        if self.task_name == 'long_term_forecast' or self.task_name == 'short_term_forecast':
-            if mask!=None:
-                dec_out = self.forecast(x_enc, mask)
-            dec_out = self.forecast(x_enc)
-            return dec_out
-        return None
+        if mask!=None:
+            dec_out = self.forecast(x_enc, mask)
+        dec_out = self.forecast(x_enc)
+        return dec_out
+
 
     def forecast(self, x_enc, mask=None):
 
         # print('Start Forecasting')
-        x_enc = self.normalize_layers(x_enc, 'norm')
-        # # print(f'x shape: {x_enc.shape}')
-        # B, T, N = x_enc.size()
+        # x_enc = self.normalize_layers(x_enc, 'norm')
+        # print(f'x shape: {x_enc.shape}')
+        B, N = x_enc.size()
 
-        # columns = ""
-        # for c in self.columns:
-        #     columns = columns + "," + c
-        # prompt = []
-        # for b in range(B * T):
-        #   prompt_ = (
-        #       f"<|start_prompt|>Task description: Analyse the Following features of patient in ICU"
-        #       f"Columns:{columns}"                
-        #   )
-        #   prompt.append(prompt_)
+        columns = ""
+        for c in self.columns:
+            columns = columns + "," + c
+        prompt = []
+        for b in range(B * T):
+          prompt_ = (
+              f"<|start_prompt|>Task description: Analyse the Following features of patient in ICU"
+              f"Columns:{columns}"                
+          )
+          prompt.append(prompt_)
 
-        # prompt = self.tokenizer(prompt, return_tensors="pt", padding=True, truncation=True, max_length=2048).input_ids
-        # prompt_embeddings = self.llm_model.get_input_embeddings()(prompt.to(x_enc.device)) 
+        prompt = self.tokenizer(prompt, return_tensors="pt", padding=True, truncation=True, max_length=2048).input_ids
+        prompt_embeddings = self.llm_model.get_input_embeddings()(prompt.to(x_enc.device)) 
 
-        # x_enc = x_enc.view(T * B, N, 1)
+        x_enc = x_enc.permute(0, 2, 1)
         # # print(f'x reshape: {x_enc.shape}')
-        # enc_out = self.value_embedding(x_enc)
+        enc_out = self.value_embedding(x_enc)
         # # print(f'x shape after value embedding: {enc_out.shape}')
-        # llama_enc_out = torch.cat([prompt_embeddings, enc_out], dim=1)
+        llama_enc_out = torch.cat([prompt_embeddings, enc_out], dim=1)
         # # print(f'llama input/enc_out: {llama_enc_out.shape}')
-        # dec_out = self.llm_model(inputs_embeds=llama_enc_out).last_hidden_state        
+        # x_enc = self.llm_model.get_input_embeddings()(x_enc)
+        dec_out = self.llm_model(inputs_embeds=llama_enc_out).last_hidden_state        
         # dec_out = dec_out[:, -self.n_features:, :]
-        # # print(f'dec out: {dec_out.shape}') 
-        pred = self.mlp(x_enc)   
-        # print(f'pred: {pred.shape}')
+        dec_out = self.mlp(dec_out)
 
-        return pred
+        return dec_out
 
     def calcute_lags(self, x_enc):
         q_fft = torch.fft.rfft(x_enc.permute(0, 2, 1).contiguous(), dim=-1)
