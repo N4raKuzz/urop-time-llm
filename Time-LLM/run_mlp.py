@@ -28,7 +28,7 @@ parser.add_argument('--model', type=str, default='TimeLLM',
 parser.add_argument('--seed', type=int, default=2021, help='random seed')
 
 # data loader
-parser.add_argument('--data', type=str, default='MIMIC', help='dataset type')
+parser.add_argument('--data', type=str, default='MOR', help='dataset type, options:[MOR, MIMIC]')
 parser.add_argument('--root_path', type=str, default='./dataset/MIMIC/', help='root path of the data file')
 parser.add_argument('--data_path', type=str, default='MIMICtable_261219.csv', help='data file')
 parser.add_argument('--features', type=str, default='M',
@@ -47,8 +47,8 @@ parser.add_argument('--pred_len', type=int, default=1, help='prediction sequence
 
 # model define
 parser.add_argument('--n_features', type=int, default=55, help='num of input features')
-parser.add_argument('--input_size', type=int, default=54, help='input size of mlp')
-parser.add_argument('--hidden_size', type=int, default=2, help='hidden size of mlp')
+parser.add_argument('--input_size', type=int, default=55, help='input size of mlp')
+parser.add_argument('--hidden_size', type=int, default=27, help='hidden size of mlp')
 
 # optimization
 parser.add_argument('--num_workers', type=int, default=10, help='data loader num workers')
@@ -66,7 +66,9 @@ args = parser.parse_args()
 
 def evaluate(model, test_loader, device):
     model.eval()
-    criterion = nn.BCELoss()
+    # criterion = nn.BCELoss()
+    pos_weight = torch.tensor([1.0]).to(device)
+    criterion = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
     predictions = []
     targets = []
     test_loss = []
@@ -95,7 +97,7 @@ def evaluate(model, test_loader, device):
 
     predictions = np.round(predictions).tolist()
     cm = confusion_matrix(targets, predictions)
-    plot_confusion_matrix(cm=cm, labels=['Decline','Incline'], save_path='plots/Mlp2_cm.png')
+    plot_confusion_matrix(cm=cm, labels=['Death','Survive'], save_path='plots/Mlp2_cm_weighted.png')
 
     print("Test Loss: {0:.7f}".format(loss))
     print(f'AUROC: {auroc:.4f}')
@@ -118,6 +120,8 @@ def plot_confusion_matrix(cm, labels, save_path):
 def vali(model, vali_loader, early_stopping, device):
     model.eval()
     criterion = nn.BCELoss()
+    # pos_weight = torch.tensor([2.5]).to(device)
+    # criterion = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
     predictions = []
     targets = []
     vali_loss = []
@@ -131,7 +135,7 @@ def vali(model, vali_loader, early_stopping, device):
 
             outputs = model(batch_x)
             outputs = outputs.squeeze()  
-
+            
             loss = criterion(outputs, batch_y)
             vali_loss.append(loss.item())          
 
@@ -182,8 +186,9 @@ train_steps = len(train_loader)
 time_now = time.time()
 
 model = MLP.Model(args.input_size, args.hidden_size).to(device)
-weight = torch.tensor([0.2, 0.8])
-criterion = nn.BCELossWithLogitsLoss(weight=weight)
+criterion = nn.BCELoss()
+# pos_weight = torch.tensor([10]).to(device)
+# criterion = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
 optimizer = optim.Adam(model.parameters(), lr=args.learning_rate)
 
 train_loss = []
@@ -199,10 +204,12 @@ for epoch in range(args.train_epochs):
         optimizer.zero_grad()
 
         batch_x = batch_x.float().to(device)
-        batch_y = batch_y.float().to(device)
-        # print(f"targets: {batch_y.type()}")
- 
-        outputs = model(batch_x)
+        batch_y = batch_y.float().to(device).view(-1)
+        # print(f"targets: {batch_y.shape}")
+        # print(batch_x, batch_y)
+        
+        outputs = model(batch_x).to(device)
+        # print(outputs, batch_y)
         loss = criterion(outputs, batch_y)
         epoch_loss.append(loss.item())
         
@@ -226,10 +233,10 @@ for epoch in range(args.train_epochs):
     train_loss.append(epoch_loss)
     print("Epoch: {0} | Train Loss: {1:.7f}".format(epoch + 1, epoch_loss))
 
-    if(is_early_stopping):
-        print("Early stopping")
-        break
+    # if(is_early_stopping):
+    #     print("Early stopping")
+    #     break
 
 
 evaluate(model, test_loader, device)
-plot_loss_curves(train_loss, vali_loss, 'plots/Mlp2_loss_curve.png')
+plot_loss_curves(train_loss, vali_loss, 'plots/Mlp2_loss_curve_weighted.png')

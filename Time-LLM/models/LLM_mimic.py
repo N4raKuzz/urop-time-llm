@@ -17,6 +17,8 @@ class MLP(nn.Module):
         super().__init__()
 
         self.linear = nn.Linear(d_model, 1)
+        self.linear_classify = nn.Linear(input_dim, 1)
+        self.sigmoid = nn.Sigmoid
         self.mlp = nn.Sequential(
             nn.Linear(input_dim, mlp_hidden_dim),
             nn.ReLU(),
@@ -31,7 +33,7 @@ class MLP(nn.Module):
         x = x.squeeze(-1) 
         # x = x.view(1, self.seq_len, self.n_features)
         # x = dec_out.reshape(1, self.seq_len * self.n_features)
-        output = self.mlp(x)  
+        output = self.mlp(x) 
         # print(f"shape after mlp: {output.shape}")
         output = output.squeeze()
         return output
@@ -71,8 +73,11 @@ class Model(nn.Module):
             self.tokenizer.add_special_tokens({'pad_token': pad_token})
             self.tokenizer.pad_token = pad_token
 
-        for param in self.llm_model.parameters():
-            param.requires_grad = False
+        # for param in self.llm_model.parameters():
+        #     param.requires_grad = False
+
+        # for name, param in self.llm_model.named_parameters():
+        #     print(f"{name}: {param.requires_grad}")
 
         self.description = 'The Medical Information Mart for Intensive Care (MIMIC) dataset is a large, de-identified and publicly-available collection of medical records.'
 
@@ -103,15 +108,16 @@ class Model(nn.Module):
         # print('Start Forecasting')
         # x_enc = self.normalize_layers(x_enc, 'norm')
         # print(f'x shape: {x_enc.shape}')
-        B, N = x_enc.size()
+        x_enc = x_enc.unsqueeze(1)
+        B, T, N = x_enc.size()
 
         columns = ""
         for c in self.columns:
             columns = columns + "," + c
         prompt = []
-        for b in range(B * T):
+        for b in range(B):
           prompt_ = (
-              f"<|start_prompt|>Task description: Analyse the Following features of patient in ICU"
+              f"<|start_prompt|>Task description: Predict the mortality of the patient with given standard scaled data"
               f"Columns:{columns}"                
           )
           prompt.append(prompt_)
@@ -123,11 +129,11 @@ class Model(nn.Module):
         # # print(f'x reshape: {x_enc.shape}')
         enc_out = self.value_embedding(x_enc)
         # # print(f'x shape after value embedding: {enc_out.shape}')
-        llama_enc_out = torch.cat([prompt_embeddings, enc_out], dim=1)
-        # # print(f'llama input/enc_out: {llama_enc_out.shape}')
+        # llama_enc_out = torch.cat([prompt_embeddings, enc_out], dim=1)
+        # print(f'llama input/enc_out: {llama_enc_out.shape}')
         # x_enc = self.llm_model.get_input_embeddings()(x_enc)
-        dec_out = self.llm_model(inputs_embeds=llama_enc_out).last_hidden_state        
-        # dec_out = dec_out[:, -self.n_features:, :]
+        dec_out = self.llm_model(inputs_embeds=enc_out).last_hidden_state        
+        dec_out = dec_out[:, -N:, :]
         dec_out = self.mlp(dec_out)
 
         return dec_out

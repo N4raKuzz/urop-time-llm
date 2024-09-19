@@ -11,8 +11,10 @@ class Model(nn.Module):
         self.sigmoid = nn.Sigmoid()
 
     def forward(self, x):
-        print(f"input: {x.shape}")
+        # print(f"input: {x.shape}")
+        x = x.float()
         x = self.relu(self.layer1(x))
         x = self.sigmoid(self.layer2(x))
-        print(f"output: {x.shape}")
+        x = x.squeeze()
+        # print(f"output: {x.type()}")
         return x

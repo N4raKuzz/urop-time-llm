@@ -173,11 +173,10 @@ class Dataset_MOR(Dataset):
         df_y1 = df_combined[df_combined[self.columns_output] == 1]
         n_y1 = len(df_y1)
         n_y0_keep = min(len(df_y0), n_y1 * self.target_ratio)
- 
+
         df_y0_downsampled = df_y0.sample(n=int(n_y0_keep), random_state=42)
- 
-        df_balanced = pd.concat([df_y0_downsampled, df_y1])
-        df_balanced = df_balanced.sample(random_state=42)
+        df_balanced = pd.concat([df_y0_downsampled, df_y1]) 
+        df_balanced = df_balanced.sample(frac=1, random_state=42)        
 
         train_data_x = []
         train_data_y = []
@@ -190,13 +189,13 @@ class Dataset_MOR(Dataset):
             x = row[self.columns_input].values
             y = row[self.columns_output].astype(float)
 
-            if len(train_data_x) < 20000:
+            if len(train_data_x) < 35000:
                 train_data_x.append(x)
                 train_data_y.append(y)
-            elif len(test_data_x) < 2400:
+            elif len(test_data_x) < 4500:
                 test_data_x.append(x)
                 test_data_y.append(y)
-            elif len(vali_data_x) < 2400:
+            elif len(vali_data_x) < 4500:
                 vali_data_x.append(x)
                 vali_data_y.append(y)
             else:

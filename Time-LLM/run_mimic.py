@@ -58,7 +58,7 @@ parser.add_argument('--seq_len', type=int, default=8, help='input sequence lengt
 parser.add_argument('--label_len', type=int, default=48, help='start token length')
 parser.add_argument('--pred_len', type=int, default=1, help='prediction sequence length')
 parser.add_argument('--seasonal_patterns', type=str, default='Monthly', help='subset for M4')
-parser.add_argument('--input_size', type=int, default=54, help='input size of mlp')
+parser.add_argument('--input_size', type=int, default=55, help='input size of mlp')
 parser.add_argument('--hidden_size', type=int, default=2, help='hidden size of mlp')
 
 # model define
@@ -106,7 +106,9 @@ args = parser.parse_args()
 
 def evaluate(model, test_loader, device):
     model.eval()
-    criterion = nn.BCELoss()
+    # criterion = nn.BCELoss()
+    pos_weight = torch.tensor([2.5]).to(device)
+    criterion = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
     predictions = []
     targets = []
     test_loss = []
@@ -127,7 +129,7 @@ def evaluate(model, test_loader, device):
             predictions.extend(outputs.cpu().numpy())
             targets.extend(batch_y.cpu().numpy())
 
-
+    # print(predictions)
     test_loss = np.average(test_loss)
     print("Test Loss: {0:.7f}".format(test_loss))
     auroc = roc_auc_score(targets, predictions)
@@ -135,7 +137,7 @@ def evaluate(model, test_loader, device):
 
     predictions = np.round(predictions).tolist()
     cm = confusion_matrix(targets, predictions)
-    plot_confusion_matrix(cm=cm, labels=['Decline','Incline'], save_path='plots/Llama1_loss_curve.png')
+    plot_confusion_matrix(cm=cm, labels=['Decline','Incline'], save_path='plots/Llama2_cm.png')
 
     print("Test Loss: {0:.7f}".format(loss))
     print(f'AUROC: {auroc:.4f}')
@@ -157,7 +159,10 @@ def plot_confusion_matrix(cm, labels, save_path):
 
 def vali(model, vali_loader, early_stopping, device):
     model.eval()
-    criterion = nn.BCELoss()
+    # criterion = nn.BCELoss()
+    pos_weight = torch.tensor([2]).to(device)
+    criterion = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
+    
     predictions = []
     targets = []
     vali_loss = []
@@ -242,7 +247,6 @@ model = LLM_mimic.Model(args).float().to(device)
 model.set_columns(columns_in)
 time_now = time.time()
 
-
 train_steps = len(train_loader)
 trained_parameters = []
 for p in model.parameters():
@@ -250,19 +254,10 @@ for p in model.parameters():
         trained_parameters.append(p)
 
 model_optim = optim.Adam(trained_parameters, lr=args.learning_rate)
-
-early_stopping = EarlyStopping(patience=args.patience)
-if args.lradj == 'COS':
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(model_optim, T_max=20, eta_min=1e-8)
-else:
-    scheduler = lr_scheduler.OneCycleLR(optimizer=model_optim,
-                                        steps_per_epoch=train_steps,
-                                        pct_start=args.pct_start,
-                                        epochs=args.train_epochs,
-                                        max_lr=args.learning_rate)
-
-criterion = nn.MSELoss()
-mae_metric = nn.L1Loss()
+early_stopping = EarlyStopping(patience=args.patience)                                
+# criterion = nn.BCELoss()
+pos_weight = torch.tensor([2]).to(device)
+criterion = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
 
 if args.use_amp:
     scaler = torch.cuda.amp.GradScaler()
@@ -286,14 +281,11 @@ for epoch in range(args.train_epochs):
         # dec_inp = torch.zeros_like(batch_y[:, :]).float().to(device)
         # dec_inp = torch.cat([batch_y[:, :], dec_inp], dim=1).float().to(device)
 
-        llama_outputs = model(batch_x).to(device)
         # print(f"llama_output: {llama_outputs.shape}")
         # lstm_outputs = lstm(llama_outputs).to(device)
         # print(f"lstm_output: {lstm_outputs.shape}")
 
-        outputs = llama_outputs[:,list(range(3,51))]
-        batch_y = batch_y[:, -1:]
-        
+        outputs = model(batch_x).to(device)
         loss = criterion(outputs, batch_y)
         epoch_loss.append(loss.item())
 
@@ -315,10 +307,10 @@ for epoch in range(args.train_epochs):
     train_loss.append(epoch_loss)
     print("Epoch: {0} | Train Loss: {1:.7f}".format(epoch + 1, epoch_loss))
 
-    if(is_early_stopping):
-        print("Early stopping")
-        break
+    # if(is_early_stopping):
+    #     print("Early stopping")
+    #     break
 
 
 evaluate(model, test_loader, device)
-plot_loss_curves(train_loss, vali_loss, 'plots/Llama1_loss_curve.png')
+plot_loss_curves(train_loss, vali_loss, 'plots/Llama2_loss_curve.png')
