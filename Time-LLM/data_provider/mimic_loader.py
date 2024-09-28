@@ -7,6 +7,7 @@ import numpy as np
 import pandas as pd
 from torch.utils.data import Dataset
 from sklearn.preprocessing import StandardScaler
+from sklearn.model_selection import train_test_split, GroupShuffleSplit
 import warnings
 
 warnings.filterwarnings('ignore')
@@ -169,51 +170,46 @@ class Dataset_MOR(Dataset):
 
         df_combined = pd.DataFrame(combined_data, columns=self.columns)
         
-        df_y0 = df_combined[df_combined[self.columns_output] == 0]
-        df_y1 = df_combined[df_combined[self.columns_output] == 1]
-        n_y1 = len(df_y1)
-        n_y0_keep = min(len(df_y0), n_y1 * self.target_ratio)
+        gss = GroupShuffleSplit(
+            n_splits=1, 
+            test_size=0.1, 
+            random_state=42
+        )
+        train_val_idx, test_idx = next(gss.split(df_combined, groups=df_combined['icustayid']))
+        
+        train_val = df_combined.iloc[train_val_idx]
+        test = df_combined.iloc[test_idx]
 
-        df_y0_downsampled = df_y0.sample(n=int(n_y0_keep), random_state=42)
-        df_balanced = pd.concat([df_y0_downsampled, df_y1]) 
-        df_balanced = df_balanced.sample(frac=1, random_state=42)        
+        train, val = train_test_split(
+            train_val, 
+            test_size=0.11111, 
+            stratify=train_val['icustayid'],
+            random_state=42
+        )
+        # if self.flag != 'test':
+        #     df_y0 = train_val[train_val[self.columns_output] == 0]
+        #     df_y1 = train_val[train_val[self.columns_output] == 1]
+        #     n_y1 = len(df_y1)
+        #     n_y0_keep = min(len(df_y0), n_y1 * self.target_ratio)
 
-        train_data_x = []
-        train_data_y = []
-        test_data_x = []
-        test_data_y = []
-        vali_data_x = []
-        vali_data_y = []
-
-        for _, row in df_balanced.iterrows():
-            x = row[self.columns_input].values
-            y = row[self.columns_output].astype(float)
-
-            if len(train_data_x) < 35000:
-                train_data_x.append(x)
-                train_data_y.append(y)
-            elif len(test_data_x) < 4500:
-                test_data_x.append(x)
-                test_data_y.append(y)
-            elif len(vali_data_x) < 4500:
-                vali_data_x.append(x)
-                vali_data_y.append(y)
-            else:
-                break
+        #     df_y0_downsampled = df_y0.sample(n=int(n_y0_keep), random_state=42)
+        #     train_val_balanced = pd.concat([df_y0_downsampled, df_y1])
+        #     train_val_balanced = train_val_balanced.sample(frac=1, random_state=42)
+        # else:
+        #     test = test
 
         if self.flag == 'train':
-            self.data_x = train_data_x
-            self.data_y = train_data_y
+            self.data = train
         elif self.flag == 'test':
-            self.data_x = test_data_x
-            self.data_y = test_data_y
-        else:
-            self.data_x = vali_data_x
-            self.data_y = vali_data_y
+            self.data = test
+        elif self.flag == 'vali':
+            self.data = val
+
+        self.data_x = self.data[self.columns_input].values
+        self.data_y = self.data[self.columns_output].values.astype(float)
 
         self.tot_len = len(self.data_x)
         print(f'{self.flag} dataset len: {self.tot_len}')
-
 
     def __getitem__(self, index):
         # seq_x, mask_x = self.pad_sequence(self.data_x[index])
