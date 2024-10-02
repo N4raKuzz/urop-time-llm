@@ -87,11 +87,12 @@ class mase_loss(nn.Module):
     
 
 class focal_loss(nn.Module):
-    def __init__(self, gamma=2.0, eps=1e-6, size_average=True):
+    def __init__(self, gamma=2.0, eps=1e-6, alpha=None, size_average=True):
         super(focal_loss, self).__init__()
 
         self.gamma = gamma
         self.eps = eps
+        self.alpha = alpha
 
     def forward(self, insample:t.Tensor, target:t.Tensor):
         """
@@ -102,5 +103,9 @@ class focal_loss(nn.Module):
         """
         probs = t.sigmoid(insample)
         log_probs = -t.log(probs)
-        focal_loss = t.sum(  t.pow(1-probs + self.eps, self.gamma).mul(log_probs).mul(target)  , dim=1)
+        if self.alpha is not None:
+            focal_loss = t.sum( t.pow(1-probs + self.eps, self.gamma).mul(self.alpha).mul(log_probs).mul(target), dim=1)
+        else:
+            focal_loss = t.sum( t.pow(1-probs + self.eps, self.gamma).mul(log_probs).mul(target), dim=1)
+            
         return t.mean(focal_loss) 
