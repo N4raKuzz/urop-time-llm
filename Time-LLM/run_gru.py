@@ -1,4 +1,3 @@
-from math import gamma
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -7,10 +6,9 @@ from sklearn.metrics import roc_auc_score, average_precision_score, confusion_ma
 import matplotlib.pyplot as plt
 import seaborn as sns
 
-from models import MLP
+from models import GRU
 from data_provider.data_factory import data_provider
 from utils.tools import EarlyStopping
-from utils.losses import focal_loss
 
 import argparse
 import time
@@ -49,16 +47,16 @@ parser.add_argument('--pred_len', type=int, default=1, help='prediction sequence
 
 # model define
 parser.add_argument('--n_features', type=int, default=55, help='num of input features')
-parser.add_argument('--input_size', type=int, default=55, help='input size of mlp')
-parser.add_argument('--hidden_size', type=int, default=27, help='hidden size of mlp')
+parser.add_argument('--input_size', type=int, default=1, help='input size of gru')
+parser.add_argument('--hidden_size', type=int, default=27, help='number of gru units')
+parser.add_argument('--output_size', type=int, default=1, help='output size of gru')
+parser.add_argument('--num_layers', type=int, default=4, help='number of gru layers')
 
 # optimization
 parser.add_argument('--num_workers', type=int, default=10, help='data loader num workers')
 parser.add_argument('--itr', type=int, default=1, help='experiments times')
 parser.add_argument('--train_epochs', type=int, default=100, help='train epochs')
 parser.add_argument('--align_epochs', type=int, default=10, help='alignment epochs')
-parser.add_argument('--alpha', type=int, default=0.95, help='alpha for focal loss')
-parser.add_argument('--gamma', type=int, default=2.5, help='gamma for focal loss')
 parser.add_argument('--batch_size', type=int, default=32, help='batch size of train input data')
 parser.add_argument('--eval_batch_size', type=int, default=8, help='batch size of model evaluation')
 parser.add_argument('--patience', type=int, default=10, help='early stopping patience')
@@ -99,7 +97,7 @@ def evaluate(model, test_loader, device):
 
     predictions = np.round(predictions).tolist()
     cm = confusion_matrix(targets, predictions)
-    plot_confusion_matrix(cm=cm, labels=['Death','Survive'], save_path='plots/MLP_MOR_cm.png')
+    plot_confusion_matrix(cm=cm, labels=['Death','Survive'], save_path='plots/GRU3_MOR_cm.png')
 
     print("Test Loss: {0:.7f}".format(loss))
     print(f'AUROC: {auroc:.4f}')
@@ -122,7 +120,7 @@ def plot_confusion_matrix(cm, labels, save_path):
 def vali(model, vali_loader, early_stopping, device):
     model.eval()
     # criterion = nn.BCELoss()
-    pos_weight = torch.tensor([31.65]).to(device)
+    pos_weight = torch.tensor([31.6]).to(device)
     criterion = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
     predictions = []
     targets = []
@@ -185,13 +183,12 @@ print(f"Device memory: {torch.cuda.get_device_properties(device.index).total_mem
 
 early_stopping = EarlyStopping(patience=args.patience)
 train_steps = len(train_loader)
-time_now = time.time()  
+time_now = time.time()
 
-model = MLP.Model(args.input_size, args.hidden_size).to(device)
+model = GRU.Model(args.hidden_size, args.num_layers, args.output_size, args.input_size).to(device)
 # criterion = nn.BCELoss()
-# pos_weight = torch.tensor([31.6]).to(device)
-# criterion = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
-criterion = focal_loss(gamma=args.gamma, alpha=args.alpha)
+pos_weight = torch.tensor([31.57]).to(device)
+criterion = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
 optimizer = optim.Adam(model.parameters(), lr=args.learning_rate)
 
 train_loss = []
@@ -236,10 +233,10 @@ for epoch in range(args.train_epochs):
     train_loss.append(epoch_loss)
     print("Epoch: {0} | Train Loss: {1:.7f}".format(epoch + 1, epoch_loss))
 
-    if(is_early_stopping):
-        print("Early stopping")
-        break
+    # if(is_early_stopping):
+    #     print("Early stopping")
+    #     break
 
 
 evaluate(model, test_loader, device)
-plot_loss_curves(train_loss, vali_loss, 'plots/MLP_MOR_loss.png')
+plot_loss_curves(train_loss, vali_loss, 'plots/GRU3_MOR_loss_curve.png')

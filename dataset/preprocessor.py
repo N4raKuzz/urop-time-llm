@@ -44,7 +44,7 @@ class DataProcessor:
                 total_rows = len(group_data)
                 
                 # Calculate indices
-                indices = np.arange(total_rows-1, 0, -mor_gap)[:mor_len]
+                indices = np.arange(total_rows-1, 0, -1)[:mor_len]
                 indices = indices[::-1] 
                 indices = indices[indices >= 0]
                 
@@ -53,15 +53,16 @@ class DataProcessor:
                 icustayid = group['icustayid'].iloc[0] 
                 mor_90 = self.outcome[self.outcome['icustay_id'] == icustayid]['morta_90'].values[0]
                 mor_90_column = np.zeros((len(data), 1))
-                mor_90_column[-4:] = mor_90
+                mor_90_column[-mor_len:-int(mor_len/mor_gap)] = mor_90
  
                 data_with_mor90 = np.hstack((data, mor_90_column))
                 data_to_df.append(data_with_mor90)
 
+        # Saving Dataset
         data_to_df = np.vstack(data_to_df)
-        columns_obs_action = np.append(columns_obs_action, 'morta_90')
-        self.save_dataset(data_to_df, 'MIMIC_MOR_'+str(mor_len)+'_'+str(mor_gap)+'.csv', columns_obs_action)
-        
+        columns_out = np.append(columns_obs_action, 'morta_90')
+        self.save_dataset(data_to_df, 'MIMIC_MOR_'+str(mor_len)+'_'+str(mor_gap)+'.csv', columns_out)
+    
     def process_seq(self, seq_len=8):
         columns = self.data.columns.to_numpy()
         columns_obs_action = columns[self.obs_action_indices]
@@ -84,12 +85,11 @@ class DataProcessor:
         if flag == 'default':
             self.process_seq(seq_len=8)
         elif flag == 'mor':
-            self.process_mor(mor_len=48, mor_gap=6)
-
+            self.process_mor(mor_len=24, mor_gap=6)
 
 if __name__ == "__main__":
-    data_dir = "./orig_data/"
-    output_dir = "./processed/"
+    data_dir = ".\orig_data\\"
+    output_dir = ".\processed\\"
 
     mor_processor = DataProcessor(data_dir, output_dir)
     mor_processor.run('mor')
