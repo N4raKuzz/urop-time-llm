@@ -4,15 +4,11 @@ class Model(nn.Module):
     def __init__(self, input_size, hidden_size):
         super(Model, self).__init__()
         self.mlp = nn.Sequential(
-            nn.Linear(input_size, input_size*3),
-            nn.ReLU(),
-            nn.Linear(input_size*3, input_size*2),
-            nn.ReLU(),
-            nn.Linear(input_size*2, input_size),
-            nn.ReLU(),
             nn.Linear(input_size, hidden_size),
             nn.ReLU(),
-            nn.Linear(hidden_size, 1),
+            nn.Linear(hidden_size, 2),
+            nn.ReLU(),
+            nn.Linear(2, 1),
             nn.Sigmoid()
         )
 

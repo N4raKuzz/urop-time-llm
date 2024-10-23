@@ -31,7 +31,7 @@ class DataProcessor:
         self.data = pd.read_csv(data_path)
         self.outcome = pd.read_csv(outcome_path)
 
-    def process_mor(self, mor_len=24, mor_gap=6):
+    def process_mor(self, mor_len=24, window_gap=6, data_gap=6):
         columns = self.data.columns.to_numpy()
         columns_obs_action = columns[self.obs_action_indices]
 

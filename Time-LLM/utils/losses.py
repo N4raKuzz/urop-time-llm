@@ -12,12 +12,9 @@
 # protection. No license to patents is granted hereunder (whether express or
 # implied). Copyright © 2020 Element AI Inc. All rights reserved.
 
-"""
-Loss functions for PyTorch.
-"""
-
 import torch as t
 import torch.nn as nn
+import torch.nn.functional as F
 import numpy as np
 import pdb
 
@@ -87,3 +84,28 @@ class mase_loss(nn.Module):
         masep = t.mean(t.abs(insample[:, freq:] - insample[:, :-freq]), dim=1)
         masked_masep_inv = divide_no_nan(mask, masep[:, None])
         return t.mean(t.abs(target - forecast) * masked_masep_inv)
+    
+
+class focal_loss(nn.Module):
+    def __init__(self, gamma=2.0, eps=1e-6, alpha=None, size_average=True):
+        super(focal_loss, self).__init__()
+
+        self.gamma = gamma
+        self.eps = eps
+        self.alpha = alpha
+
+    def forward(self, insample:t.Tensor, target:t.Tensor):
+        """
+        Focal Loss as defined in the paper "https://arxiv.org/pdf/1708.02002v2"
+
+        :param insample: Insample values. Shape: batch, 1
+        :param target: Target values. Shape: batch, 1
+        """
+        probs = t.sigmoid(insample)
+        log_probs = -t.log(probs)
+        if self.alpha is not None:
+            focal_loss = t.sum( t.pow(1-probs + self.eps, self.gamma).mul(self.alpha).mul(log_probs).mul(target), dim=1)
+        else:
+            focal_loss = t.sum( t.pow(1-probs + self.eps, self.gamma).mul(log_probs).mul(target), dim=1)
+            
+        return t.mean(focal_loss) 
